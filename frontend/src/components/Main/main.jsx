@@ -16,6 +16,7 @@ const Main = () => {
 
     try {
       const data = await fetchResponse(issue);
+      console.log("API Response:", data); // Log the response to confirm its structure
       setResponse(data);
     } catch (err) {
       setError(err.message);
@@ -42,11 +43,10 @@ const Main = () => {
           Find Solution
         </button>
       </div>
-
       {isLoading && <p>Loading...</p>}
-
       {error && <p style={{ color: "red" }}>{error}</p>}
-      {response && <div>{/* display response here using (response. )*/}</div>}
+      {response && <div>{response.message}</div>}{" "}
+      {/* display response here using (response. )*/}
     </div>
   );
 };
