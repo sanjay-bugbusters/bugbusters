@@ -1,16 +1,14 @@
-// src/api/weatherService.js
+// src/api/apiService.js
 import apiClient from "./axiosConfig";
 
 // Fetch current weather for a given location
 export const fetchResponse = async (issue) => {
   try {
-    const response = await apiClient.get(
+    const response = await apiClient.post(
+      "/issue/",
       {
-        /* api endpoints with '/' */
-      },
-      {
-        params: { q: issue }, // Dynamic query parameter
-      }
+        text: issue,
+      } // Dynamic query parameter
     );
     return response.data;
   } catch (error) {
