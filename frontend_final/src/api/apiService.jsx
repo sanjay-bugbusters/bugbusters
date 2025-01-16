@@ -1,4 +1,5 @@
 // src/api/apiService.js
+//import DummyResponse from "./DummyResponse.json";
 import apiClient from "./axiosConfig";
 
 // Fetch current weather for a given location
@@ -13,6 +14,9 @@ export const fetchResponse = async (issue) => {
     );
     //console.log(response.data.response);
     return response.data.response;
+
+    // Dummy Response
+    //return DummyResponse;
   } catch (error) {
     handleApiError(error);
   }

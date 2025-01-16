@@ -26,10 +26,24 @@ const Main = () => {
   };
 
   const formatResponse = (response) => {
+    const result = response.results[0];
     return (
       <div className="response-container">
-        {response.split("\n").map((line, index) => {
-          // Check if the line starts with a number followed by a period (e.g., "1.", "2.")
+        <div className="accuracy-section">
+          <div className="accuracy-label">Relevance</div>
+          <div className="accuracy-bar-container">
+            <div
+              className="accuracy-bar"
+              style={{ width: `${result.relevance}%` }}
+            >
+              <span className="accuracy-value">{result.relevance}%</span>
+            </div>
+          </div>
+        </div>
+        <div className="defect-summary">
+          <strong>Defect Summary:</strong> {result.defectSummary}
+        </div>
+        {result.analysis.split("\n").map((line, index) => {
           if (/^\d+\./.test(line.trim())) {
             return (
               <p key={index} style={{ textAlign: "left", marginLeft: "2rem" }}>
@@ -37,7 +51,6 @@ const Main = () => {
               </p>
             );
           }
-          // Default style for non-numbered lines
           return (
             <p key={index} style={{ textAlign: "left" }}>
               {line}
@@ -68,9 +81,7 @@ const Main = () => {
       </div>
       {isLoading && <p>Loading...</p>}
       {error && <p style={{ color: "red" }}>{error}</p>}
-      {response && (
-          <ul>{formatResponse(response)}</ul>
-      )}
+      {response && <ul>{formatResponse(response)}</ul>}
     </div>
   );
 };
