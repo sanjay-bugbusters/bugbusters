@@ -1,7 +1,5 @@
-// src/api/apiService.js
 import apiClient from "./axiosConfig";
 
-// Fetch current weather for a given location
 export const fetchResponse = async (issue) => {
   try {
     console.log("entered");
@@ -9,16 +7,15 @@ export const fetchResponse = async (issue) => {
       "http://localhost:8000/defects/response",
       {
         prompt: issue,
-      } // Dynamic query parameter
+      }
     );
-    //console.log(response.data.response);
+    console.log(response.data.response);
     return response.data.response;
   } catch (error) {
     handleApiError(error);
   }
 };
 
-// Error handling
 const handleApiError = (error) => {
   if (error.response) {
     console.error("Response Error:", error.response.data.error.message);

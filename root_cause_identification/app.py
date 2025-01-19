@@ -7,6 +7,7 @@ import os
 from dotenv import load_dotenv
 import uvicorn
 from pydantic import BaseModel
+from jira_data_loader import load_data_from_jira
 from fastapi.middleware.cors import CORSMiddleware
 
 defects_llm = {}
@@ -16,6 +17,7 @@ async def lifespan(app: FastAPI):
     BASE_DIR = Path(__file__).absolute().parent
     ENV_PATH = os.path.join(BASE_DIR, ".env")
     load_dotenv(ENV_PATH)
+    load_data_from_jira()
     vs = FAISS.initialize()
     defects_llm["embed_model"], defects_llm["index"], defects_llm["data"] = vs.add_documents()
     yield
@@ -37,6 +39,8 @@ async def defects_response(request: Request):
     data = await request.json()
     llm = LLM.initialize()
     response = llm.response(defects_llm["embed_model"], defects_llm["index"], defects_llm["data"], data['prompt'])
+    datawe = JSONResponse(content={"response": response})
+    print(response)
     return JSONResponse(content={"response": response})
 
 if __name__ == "__main__":
