@@ -1,6 +1,5 @@
-import React from "react";
+import React, { useState } from "react";
 import "./main.css";
-import { useState } from "react";
 import { fetchResponse } from "../../api/apiService";
 
 const Main = () => {
@@ -8,6 +7,7 @@ const Main = () => {
   const [response, setResponse] = useState(null);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [expandedIndex, setExpandedIndex] = useState(null);
 
   const handleClick = async () => {
     setIsLoading(true);
@@ -32,66 +32,70 @@ const Main = () => {
     });
   };
 
-  const formatResponse = (response) => {
-    const result =
-      response.results && response.results[0] ? response.results[0] : null;
+  const toggleExpand = (index) => {
+    setExpandedIndex(expandedIndex === index ? null : index);
+  };
 
+  const formatResponse = (response) => {
     return (
       <div className="response-container">
-        {result && (
-          <>
-            {/* Relevance Section */}
-            {result.relevance && (
-              <div className="accuracy-section">
-                <div className="accuracy-label">Relevance</div>
-                <div className="accuracy-bar-container">
-                  <div
-                    className="accuracy-bar"
-                    style={{ width: `${result.relevance}%` }}
-                  >
-                    <span className="accuracy-value">{result.relevance}%</span>
-                  </div>
+        {response.results && response.results.length > 0 ? (
+          response.results.map((result, index) => (
+            <div key={index} className="defect-item">
+              <div
+                className="defect-summary"
+                onClick={() => toggleExpand(index)}
+              >
+                <span className="toggle-icon">
+                  {expandedIndex === index ? "▼" : "▶"}
+                </span>
+                <span className="summary-text">
+                  <strong>Defect Summary:</strong> {result.defectSummary}
+                </span>
+              </div>
+              {expandedIndex === index && (
+                <div className="defect-details">
+                  {/* Relevance Section */}
+                  {result.relevance && (
+                    <div className="accuracy-section">
+                      <div className="accuracy-label">Relevance</div>
+                      <div className="accuracy-bar-container">
+                        <div
+                          className="accuracy-bar"
+                          style={{ width: `${result.relevance}%` }}
+                        >
+                          <span className="accuracy-value">
+                            {result.relevance}%
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {/* Analysis Section */}
+                  {result.analysis && (
+                    <div className="analysis">
+                      <strong>Analysis:</strong>
+                      {result.analysis.split("\n").map((line, idx) => (
+                        <p
+                          key={idx}
+                          style={{
+                            textAlign: "left",
+                            marginLeft: /^\d+\./.test(line.trim())
+                              ? "2rem"
+                              : "0",
+                          }}
+                          dangerouslySetInnerHTML={{
+                            __html: formatTextWithLinks(line),
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
-
-            {/* Defect Summary */}
-            {result.defectSummary && (
-              <div className="defect-summary">
-                <strong>Defect Summary:</strong>
-                <p
-                  dangerouslySetInnerHTML={{
-                    __html: formatTextWithLinks(result.defectSummary),
-                  }}
-                />
-              </div>
-            )}
-
-            {/* Analysis Section */}
-            {result.analysis && (
-              <div className="analysis">
-                <strong>Analysis:</strong>
-                {result.analysis.split("\n").map((line, index) => {
-                  return (
-                    <p
-                      key={index}
-                      style={{
-                        textAlign: "left",
-                        marginLeft: /^\d+\./.test(line.trim()) ? "2rem" : "0",
-                      }}
-                      dangerouslySetInnerHTML={{
-                        __html: formatTextWithLinks(line),
-                      }}
-                    />
-                  );
-                })}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* Fallback message */}
-        {!result && response.message && (
+              )}
+            </div>
+          ))
+        ) : (
           <div className="fallback-message">
             <p>{response.message}</p>
           </div>
