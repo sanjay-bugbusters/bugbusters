@@ -10,6 +10,7 @@ class DataBase():
     @classmethod
     def intialize(cls):
         conn = MongoClient(f"mongodb+srv://{os.environ['USER_NAME']}:{os.environ['PASSWORD']}@issues.tbatd.mongodb.net/")
+        conn = MongoClient(f"mongodb+srv://{os.environ['USER_NAME']}:{os.environ['PASSWORD']}@issues.tbatd.mongodb.net/")
         conn = conn[os.environ['DB_NAME']]
         return conn
 
@@ -109,16 +110,16 @@ Important: Avoid hypothetical answers if the query is not found in the dataset. 
             }
 
         results_with_analysis = []
-        defect_summary = search_results.iloc[0]["Defect Summary"]
-        data = self.get_data(defect_summary)
-        analysis = self.together(query, data, defect_summary)
-        threshold = 0.8
-        relevance_percentage = round((1 - search_results["distance"].iloc[0] / threshold) * 100 if isinstance(search_results["distance"], pd.Series) else (1 - search_results["distance"] / threshold) * 100)
-        results_with_analysis.append({
-            "defectSummary": defect_summary,
-            "relevance": relevance_percentage,
-            "analysis": analysis
-        })
+        for _, row in search_results.iterrows():
+            defect_summary = row["Defect Summary"]
+            data = self.get_data(defect_summary)
+            analysis = self.together(query, data, defect_summary)
+            relevance_percentage = round((1 - row["distance"] / 0.8) * 100)
+            results_with_analysis.append({
+                "defectSummary": defect_summary,
+                "relevance": relevance_percentage,
+                "analysis": analysis
+            })
         
 
         return {
