@@ -42,16 +42,25 @@ const Main = () => {
         {response.results && response.results.length > 0 ? (
           response.results.map((result, index) => (
             <div key={index} className="defect-item">
-              <div
-                className="defect-summary"
-                onClick={() => toggleExpand(index)}
-              >
-                <span className="toggle-icon">
-                  {expandedIndex === index ? "▼" : "▶"}
-                </span>
-                <span className="summary-text">
-                  <strong>Defect Summary:</strong> {result.defectSummary}
-                </span>
+              <div className="defect-summary">
+                <div className="summary-content">
+                  <span
+                    className={`toggle-icon ${
+                      expandedIndex === index ? "expanded" : ""
+                    }`}
+                  >
+                    {expandedIndex === index ? "▼" : "▶"}
+                  </span>
+                  <span className="summary-text">
+                    <strong>Defect Summary:</strong> {result.defectSummary}
+                  </span>
+                </div>
+                <button
+                  className="detail-view-btn"
+                  onClick={() => toggleExpand(index)}
+                >
+                  {expandedIndex === index ? "Hide Details" : "View Details"}
+                </button>
               </div>
               {expandedIndex === index && (
                 <div className="defect-details">
