@@ -10,7 +10,7 @@ load_dotenv()
 
 JQL_QUERY = 'issuetype = Bug AND status = Done'
 
-mongo_client = MongoClient(f"mongodb+srv://{os.environ['USER_NAME']}:{os.environ['PASSWORD']}@issues.tbatd.mongodb.net/")
+mongo_client = MongoClient(f"mongodb+srv://{os.environ['USER_NAME']}:{os.environ['PASSWORD']}@pocapp.aegpzjw.mongodb.net/")
 db = mongo_client[os.environ['DB_NAME']]
 collection = db['defect_cause']
 

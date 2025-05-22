@@ -1,0 +1,6 @@
+**/node_modules
+**/venv
+**/venv_py312
+**/__pycache__
+**/cleanenv
+**/.DS_Store

@@ -1,6 +1,7 @@
 import faiss
 import os
 import pandas as pd
+import re
 from sentence_transformers import SentenceTransformer
 from together import Together
 from pymongo import MongoClient
@@ -9,8 +10,8 @@ class DataBase():
 
     @classmethod
     def intialize(cls):
-        conn = MongoClient(f"mongodb+srv://{os.environ['USER_NAME']}:{os.environ['PASSWORD']}@issues.tbatd.mongodb.net/")
-        conn = MongoClient(f"mongodb+srv://{os.environ['USER_NAME']}:{os.environ['PASSWORD']}@issues.tbatd.mongodb.net/")
+        conn = MongoClient(f"mongodb+srv://{os.environ['USER_NAME']}:{os.environ['PASSWORD']}@pocapp.aegpzjw.mongodb.net/")
+        conn = MongoClient(f"mongodb+srv://{os.environ['USER_NAME']}:{os.environ['PASSWORD']}@pocapp.aegpzjw.mongodb.net/")
         conn = conn[os.environ['DB_NAME']]
         return conn
 
@@ -54,6 +55,55 @@ class LLM():
 
     def __init__(self, llm: Together):
         self.llm = llm
+        # Dictionary of greetings and their responses
+        self.greeting_patterns = {
+            r'\b(hi|hello|hey|greetings|howdy)\b': [
+                "Hello! I'm Bugbuster, your defect resolution assistant. How can I help you today?",
+                "Hi there! I'm here to help with any technical issues. What problem would you like me to solve?",
+                "Hello! I'm ready to assist with troubleshooting. Could you describe the issue you're facing?"
+            ],
+            r'\b(good morning|morning)\b': [
+                "Good morning! I'm Bugbuster, ready to help with any technical issues today."
+            ],
+            r'\b(good afternoon|afternoon)\b': [
+                "Good afternoon! How can I assist with your technical queries today?"
+            ],
+            r'\b(good evening|evening)\b': [
+                "Good evening! I'm here to help resolve any defects or issues you're encountering."
+            ],
+            r'\b(how are you|how\'s it going|how do you do|how are things)\b': [
+                "I'm functioning well and ready to assist with any technical issues. How can I help you today?",
+                "I'm operational and ready to help! What defect or issue would you like assistance with?"
+            ],
+            r'\b(thanks|thank you|thx|ty)\b': [
+                "You're welcome! Let me know if you need any more help with technical issues.",
+                "Happy to help! Feel free to ask if you have any more questions about defects or troubleshooting."
+            ],
+            r'\b(bye|goodbye|see you|farewell)\b': [
+                "Goodbye! Feel free to return whenever you need assistance with defects or technical issues.",
+                "Until next time! I'll be here when you need technical support."
+            ]
+        }
+        
+        # General fallback response for unrecognized conversational messages
+        self.fallback_response = "I'm designed to help with technical issues and defect resolution. Could you please describe the problem you're experiencing?"
+
+    def is_greeting(self, text):
+        """Detect if the input is a conversational greeting and return appropriate response"""
+        text = text.lower().strip()
+        
+        # Check if the text is very short (likely not a technical query)
+        if len(text.split()) <= 3:
+            # Check against greeting patterns
+            for pattern, responses in self.greeting_patterns.items():
+                if re.search(pattern, text, re.IGNORECASE):
+                    import random
+                    return True, random.choice(responses)
+            
+            # If not a recognized greeting but still very short, use fallback
+            return True, self.fallback_response
+            
+        return False, None
 
     @classmethod
     def initialize(cls):
@@ -68,7 +118,7 @@ To perform this task, you will:
 
 1. Analyze the defect summary and correlate it with the data in {df} to identify patterns, anomalies, or the root cause of the issue.
 2. Based on your analysis, respond to the user's query {user_question} by providing a detailed explanation of the root cause and step-by-step solutions to fix it.
-3. Validate whether the user’s query matches any relevant defect in the dataset {df}.
+3. Validate whether the user's query matches any relevant defect in the dataset {df}.
         * If no match is found, respond with the following message:
           "The query you provided is not found in the dataset. Therefore, I cannot provide a possible solution. Please check the defect summary or provide additional details."
         * If relevant data is found, provide a detailed, clear, and actionable explanation addressing the root cause and comprehensive steps to fix it.
@@ -101,6 +151,15 @@ Important: Avoid hypothetical answers if the query is not found in the dataset. 
         return results
 
     def response(self, embed_model, index, data, query):
+        # First, check if this is a simple greeting
+        is_greeting, greeting_response = self.is_greeting(query)
+        if is_greeting:
+            return {
+                "message": greeting_response,
+                "results": []
+            }
+            
+        # If not a greeting, proceed with the normal search and LLM process
         search_results = FAISS.search(query, embed_model, index, data, top_k=5, threshold=0.8)
     
         if search_results.empty:
@@ -125,5 +184,5 @@ Important: Avoid hypothetical answers if the query is not found in the dataset. 
         return {
             "message": "Relevant defects found.",
             "results": results_with_analysis
-    }
+        }
 

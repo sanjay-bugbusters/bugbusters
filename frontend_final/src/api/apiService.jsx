@@ -1,22 +1,22 @@
-// import apiClient from "./axiosConfig";
+import apiClient from "./axiosConfig";
 
 export const fetchResponse = async (issue) => {
   try {
-    console.log("entered");
-    // const response = await apiClient.post(
-    //   "http://localhost:8000/defects/response",
-    //   {
-    //     prompt: issue,
-    //   }
-    // );
+    // console.log("entered");
+    const response = await apiClient.post(
+      "http://localhost:8000/defects/response",
+      {
+        prompt: issue,
+      }
+    );
     // console.log(response.data.response);
-    // return response.data.response;
+    return response.data.response;
     
-    const response = await fetch("JSON Missiing policy detail defect response.json");
-    const jsonData = await response.json();
+    // const response = await fetch("JSON Missiing policy detail defect response.json");
+    // const jsonData = await response.json();
 
-    console.log("Fetched Data:", jsonData);
-    return jsonData;
+    // console.log("Fetched Data:", jsonData);
+    // return jsonData;
 
   } catch (error) {
     handleApiError(error);
@@ -25,7 +25,7 @@ export const fetchResponse = async (issue) => {
 
 const handleApiError = (error) => {
   if (error.response) {
-    console.error("Response Error:", error.response.data.error.message);
+    // console.error("Response Error:", error.response.data.error.message);
     throw new Error(error.response.data.error.message);
   } else {
     console.error("Unexpected Error:", error.message);
