@@ -2,21 +2,36 @@ import faiss
 import os
 import pandas as pd
 import re
+import random
 from sentence_transformers import SentenceTransformer
 from together import Together
 from pymongo import MongoClient
+import uuid
+from datetime import datetime, timedelta
+from difflib import get_close_matches
 
-class DataBase():
+class DataBase:
 
     @classmethod
-    def intialize(cls):
-        conn = MongoClient(f"mongodb+srv://{os.environ['USER_NAME']}:{os.environ['PASSWORD']}@pocapp.aegpzjw.mongodb.net/")
-        conn = MongoClient(f"mongodb+srv://{os.environ['USER_NAME']}:{os.environ['PASSWORD']}@pocapp.aegpzjw.mongodb.net/")
-        conn = conn[os.environ['DB_NAME']]
-        return conn
+    def initialize(cls):
+        try:
+            # Ensure environment variables are set
+            user_name = os.environ.get('USER_NAME')
+            password = os.environ.get('PASSWORD')
+            db_name = os.environ.get('DB_NAME')
 
-class FAISS():
-    
+            if not user_name or not password or not db_name:
+                raise ValueError("Missing required environment variables: USER_NAME, PASSWORD, or DB_NAME")
+
+            # Establish MongoDB connection
+            conn = MongoClient(f"mongodb+srv://{user_name}:{password}@pocapp.aegpzjw.mongodb.net/")
+            db = conn[db_name]
+            return db
+        except Exception as e:
+            raise ConnectionError(f"Failed to connect to the database: {e}")
+
+class FAISS:
+
     def __init__(self, embed_model: SentenceTransformer, index: faiss.IndexFlatL2, data: pd.DataFrame):
         self.embed_model = embed_model
         self.index = index
@@ -25,37 +40,100 @@ class FAISS():
     @classmethod
     def initialize(cls):
         embed_model = SentenceTransformer("all-MiniLM-L6-v2")
-        index  = faiss.IndexFlatL2(384)
-        conn = DataBase.intialize()
-        data = conn['defect_cause'].find()
-        data = list(data)
-        data = pd.DataFrame(data)
-        return cls(embed_model, index, data)
+        index = faiss.IndexFlatL2(384)
+        conn = DataBase.initialize()
+        data = list(conn['defect_cause'].find())
+        df = pd.DataFrame(data)
+        return cls(embed_model, index, df)
 
     def add_documents(self):
-        self.data["Defect Summary"] = self.data["Defect Summary"].apply(lambda x: str(x) if not isinstance(x, str) else x)
+        self.data["Defect Summary"] = self.data["Defect Summary"].astype(str)
         embeddings = self.embed_model.encode(self.data["Defect Summary"].tolist())
         self.index.add(embeddings)
-        print("document added")
+        print("Documents added to FAISS index")
         return self.embed_model, self.index, self.data
-    
+
     @staticmethod
     def search(query, embed_model, index, data, top_k=5, threshold=0.8):
+        # Extract bug ID from query text
+        bug_id_pattern = re.search(r'[A-Z]+-\d+', query.upper())
+        # Enhanced owner name patterns to handle more variations
+        owner_patterns = [
+            r'(?:which|what|show|list|get)\s+(?:are|is)\s+(?:the\s+)?(?:defects?|bugs?|issues?)?\s*(?:by|of|for|owned\s+by)?\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)',  # "which are the bugs by Nishanth"
+            r'(?:defect\s+)?([A-Za-z]+(?:\s+[A-ZaZ]+)?)\s+(?:is|has)\s+created',  # existing pattern
+            r'(?:owner|created by|by)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)',  # "owner Nishanth" or "created by Nishanth"
+            r'([A-Za-z]+(?:\s+[A-Za-z]+)?)\s*(?:\'s)?\s*(?:defects?|bugs?)',  # "Nishanth's bugs"
+            r'^([A-Za-z]+(?:\s+[A-Za-z]+)?)$'  # Just the name
+        ]
+
+        # Check for direct bug ID match first
+        if bug_id_pattern:
+            bug_id = bug_id_pattern.group()
+            direct_match = data[data['bug_id'] == bug_id]
+            if not direct_match.empty:
+                direct_match["distance"] = 0.0
+                print(f"Found direct bug ID match for {bug_id}")
+                return direct_match
+            print(f"No direct match found for bug ID {bug_id}")
+
+        # Enhanced owner name matching with caching
+        owner_name = None
+        for pattern in owner_patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                owner_name = match.group(1).strip()
+                break
+
+        # Check for owner match with improved name handling
+        if owner_name:
+            print(f"Searching for defects by owner: {owner_name}")
+            
+            # Try exact match first (case insensitive)
+            owner_match = data[data['owner'].str.lower() == owner_name.lower()]
+            
+            # If no exact match, try partial match
+            if owner_match.empty:
+                owner_match = data[data['owner'].str.lower().str.contains(owner_name.lower(), na=False)]
+            
+            if not owner_match.empty:
+                owner_match = owner_match.sort_values('bug_id', ascending=False).head(top_k)
+                owner_match["distance"] = 0.0
+                print(f"Found {len(owner_match)} defects for owner {owner_name}")
+                return owner_match
+            print(f"No defects found for owner {owner_name}")
+
+        # Continue with semantic search if no direct matches
+        query = query.lower().strip()
+        query_keywords = query.split()
+        
+        # Optimize context based on search type
+        if bug_id_pattern:
+            threshold = 0.9
+            query = f"{query} defect issue"
+        elif owner_name:  # Changed from owner_patterns to owner_name
+            threshold = 0.9
+            query = f"defects by {owner_name}"  # Simplified query context
+        elif len(query_keywords) < 3:
+            query = " ".join(query_keywords + ["defect", "bug"])
+
         query_embedding = embed_model.encode([query])
         distances, indices = index.search(query_embedding, top_k)
-        valid_indices = [i for i, dist in zip(indices[0], distances[0]) if dist < threshold]
+        
+        # More permissive threshold for bug ID and owner searches
+        search_threshold = threshold + 0.2 if (bug_id_pattern or owner_patterns) else threshold + 0.1
+        valid_indices = [i for i, dist in zip(indices[0], distances[0]) if dist < search_threshold]
+        
         if not valid_indices:
             return pd.DataFrame()
+
         results = data.iloc[valid_indices].copy()
         results["distance"] = distances[0][:len(valid_indices)]
         return results
 
 
-class LLM():
-
+class LLM:
     def __init__(self, llm: Together):
         self.llm = llm
-        # Dictionary of greetings and their responses
         self.greeting_patterns = {
             r'\b(hi|hello|hey|greetings|howdy)\b': [
                 "Hello! I'm Bugbuster, your defect resolution assistant. How can I help you today?",
@@ -84,105 +162,203 @@ class LLM():
                 "Until next time! I'll be here when you need technical support."
             ]
         }
-        
-        # General fallback response for unrecognized conversational messages
         self.fallback_response = "I'm designed to help with technical issues and defect resolution. Could you please describe the problem you're experiencing?"
+        self.conversations = {}  # Store conversation history
+        self.context_window = timedelta(minutes=30)  # Context window for conversations
+
+    def _cleanup_old_conversations(self):
+        current_time = datetime.now()
+        expired = [conv_id for conv_id, conv in self.conversations.items() 
+                  if (current_time - conv['last_updated']) > self.context_window]
+        for conv_id in expired:
+            del self.conversations[conv_id]
+
+    def get_or_create_conversation(self, conversation_id=None):
+        self._cleanup_old_conversations()
+        if not conversation_id or conversation_id not in self.conversations:
+            conversation_id = str(uuid.uuid4())
+            self.conversations[conversation_id] = {
+                'history': [],
+                'last_updated': datetime.now(),
+                'context': {}
+            }
+        return conversation_id
 
     def is_greeting(self, text):
         """Detect if the input is a conversational greeting and return appropriate response"""
         text = text.lower().strip()
-        
-        # Check if the text is very short (likely not a technical query)
-        if len(text.split()) <= 3:
-            # Check against greeting patterns
-            for pattern, responses in self.greeting_patterns.items():
-                if re.search(pattern, text, re.IGNORECASE):
-                    import random
-                    return True, random.choice(responses)
-            
-            # If not a recognized greeting but still very short, use fallback
-            return True, self.fallback_response
-            
+
+        # Optional Enhancement: If it's a bug ID like SCRUM-13, treat it as NOT a greeting
+        if re.match(r'^[A-Z]+-\d+$', text.strip(), re.IGNORECASE):
+            return False, None
+
+        # Only match if actual greeting keywords are present
+        for pattern, responses in self.greeting_patterns.items():
+            if re.search(pattern, text, re.IGNORECASE):
+                return True, random.choice(responses)
+
+        # Otherwise, it's not a greeting
         return False, None
 
     @classmethod
     def initialize(cls):
-        llm = Together(api_key=os.environ["TOGETHER_API_KEY"])
-        return cls(llm)
-    
-    def together(self, question, data, defect_summary):
-        prompt = """
-You are a highly skilled System Admin Engineer specializing in troubleshooting and root cause analysis. Your task is to analyze, diagnose, and provide a detailed root cause analysis and solutions for the defect described in the {defect_summary}.
+        try:
+            llm = Together(api_key=os.environ["TOGETHER_API_KEY"])
+            return cls(llm)
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize LLM: {e}")
 
-To perform this task, you will:
+    def generate_analysis(self, question, defect_data, defect_summary, conversation_id=None):
+        conv_id = self.get_or_create_conversation(conversation_id)
+        conversation = self.conversations[conv_id]
+        conversation['last_updated'] = datetime.now()
 
-1. Analyze the defect summary and correlate it with the data in {df} to identify patterns, anomalies, or the root cause of the issue.
-2. Based on your analysis, respond to the user's query {user_question} by providing a detailed explanation of the root cause and step-by-step solutions to fix it.
-3. Validate whether the user's query matches any relevant defect in the dataset {df}.
-        * If no match is found, respond with the following message:
-          "The query you provided is not found in the dataset. Therefore, I cannot provide a possible solution. Please check the defect summary or provide additional details."
-        * If relevant data is found, provide a detailed, clear, and actionable explanation addressing the root cause and comprehensive steps to fix it.
+        # Add context from conversation history
+        context = ""
+        if conversation['history']:
+            context = "\nPrevious conversation:\n" + "\n".join(
+                [f"User: {h['user']}\nAssistant: {h['assistant']}" 
+                 for h in conversation['history'][-3:]]  # Last 3 exchanges
+            )
 
-Response Requirements:
+        prompt = f"""
+You are Bugbuster, a friendly and knowledgeable System Admin Engineer specializing in troubleshooting. 
+Maintain a conversational tone while providing technical assistance.
 
-Your response must include the following:
+Current Context:
+Defect Summary: {defect_summary}
+Dataset: {defect_data}
+User Query: {question}
+{context}
 
-1. Start with a summary of the defect. Do not include the bug ID or bug URL in this section.
-2. Provide a detailed explanation of the root cause. Use numbered points to ensure clarity and comprehensiveness.
-3. Suggest step-by-step solutions to resolve the issue. Ensure the steps are ranked by effectiveness and practicality, considering the system's architecture and limitations.
-4. Include the JIRA ID and JIRA URL at the end of your response in a dedicated section. Explain the importance of the JIRA ID (e.g., for tracking and referencing purposes) and provide the JIRA URL as a clickable hyperlink.
-5. If the user faces doubts or roadblocks, suggest they reach out to the previous defect owner(s) for further assistance.
-6. Structure your response in plain text, ensuring clarity and professionalism without explicitly stating section headings like "Root Cause Analysis" or "Comprehensive Solutions."
-7. Provide a disclaimer at the end stating the response provided is based solely on the available dataset and is intended to offer guidance. It may not precisely correspond to the specific defect being investigated. Users are advised to validate the information provided and conduct further research for an accurate and comprehensive resolution.
+Please:
+1. Acknowledge any previous context from our conversation
+2. Provide a natural, conversational response that addresses the question
+3. Include technical details when relevant
+4. Ask clarifying questions if needed
+5. Maintain the same format for defect information (JIRA ID, etc.)
 
-Important: Avoid hypothetical answers if the query is not found in the dataset. Always ensure the response is formatted as plain text (not markdown) for better readability.
+Keep the conversation flowing while being technically accurate.
 """
+        response = self.llm.chat.completions.create(
+            model=os.environ["MODEL"],
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        # Update conversation history
+        conversation['history'].append({
+            'user': question,
+            'assistant': response.choices[0].message.content,
+            'timestamp': datetime.now()
+        })
+        
+        return response.choices[0].message.content, conv_id
 
+    def get_defect_data(self, defect_summary):
+        conn = DataBase.initialize()
+        # Try to find by bug_id first if it matches the pattern
+        if re.match(r'^[A-Z]+-\d+$', defect_summary.strip(), re.IGNORECASE):
+            bug_id = defect_summary.upper()
+            result = conn['defect_cause'].find_one(
+                {"bug_id": bug_id},
+                {"Defect Summary":1, "rootCause":1, "solution":1, "owner":1, "bug_id":1, "bug_url":1}
+            )
+            if result:
+                print(f"Found defect data for bug ID: {bug_id}")
+                return result
 
-        response = self.llm.chat.completions.create(model=os.environ["MODEL"],
-                    messages=[{"role": "user", "content": prompt.format(df=data, user_question=question, defect_summary=defect_summary)}])
-        return response.choices[0].message.content
-    
-    def get_data(self, defect_summary):
-        conn = DataBase.intialize()
-        results = conn['defect_cause'].find({"Defect Summary":defect_summary}, 
-                                            {"Defect Summary":1,"rootCause":1, "solution":1, "owner":1, "bug_id":1, "bug_url":1})
-        results = list(results)
-        return results
+        # Fall back to defect summary search
+        result = conn['defect_cause'].find_one(
+            {"Defect Summary": defect_summary},
+            {"Defect Summary":1, "rootCause":1, "solution":1, "owner":1, "bug_id":1, "bug_url":1}
+        )
+        return result
 
-    def response(self, embed_model, index, data, query):
-        # First, check if this is a simple greeting
+    def normalize_text(self, text):
+        """Normalize text by handling misspellings and formatting"""
+        # Remove special characters and extra spaces
+        text = re.sub(r'[^a-zA-Z0-9\s]', '', text)
+        # Common misspelling replacements
+        text = text.lower().replace('incorrekt', 'incorrect') \
+                         .replace('maping', 'mapping') \
+                         .replace('profle', 'profile') \
+                         .replace('servise', 'service')
+        # Remove extra spaces and normalize
+        return ' '.join(text.split())
+
+    def find_best_match(self, defect_title, data):
+        """Find best matching defect using improved fuzzy matching"""
+        normalized_title = self.normalize_text(defect_title)
+        defect_summaries = data['Defect Summary'].apply(self.normalize_text).tolist()
+        
+        # Get close matches with lower cutoff for better fuzzy matching
+        matches = get_close_matches(normalized_title, defect_summaries, n=3, cutoff=0.5)
+        
+        if matches:
+            # Find all potential matches and sort by similarity
+            potential_matches = data[data['Defect Summary'].apply(
+                lambda x: any(self.normalize_text(x) == match for match in matches)
+            )]
+            if not potential_matches.empty:
+                return potential_matches.iloc[[0]]  # Return the best match
+        return pd.DataFrame()
+
+    def response(self, embed_model, index, data, query, conversation_id=None):
+        print(f"Processing query: {query}")
+        
         is_greeting, greeting_response = self.is_greeting(query)
         if is_greeting:
-            return {
-                "message": greeting_response,
-                "results": []
-            }
+            return {"message": greeting_response, "results": []}
+
+        # Extract defect title from quotes if present
+        defect_title_match = re.search(r'["\']([^"\']+)["\']', query)
+        defect_title = defect_title_match.group(1) if defect_title_match else None
+
+        # Check for owner query pattern
+        owner_query = re.search(r'(?:who|what|tell|show)\s+(?:is|are)\s+(?:the\s+)?owner', query, re.IGNORECASE)
+
+        if owner_query and defect_title:
+            print(f"Searching for owner of: {defect_title}")
+            # Use fuzzy matching to find the best match
+            matching_defect = self.find_best_match(defect_title, data)
             
-        # If not a greeting, proceed with the normal search and LLM process
+            if not matching_defect.empty:
+                owner = matching_defect.iloc[0].get('owner', 'Owner not found')
+                original_summary = matching_defect.iloc[0]['Defect Summary']
+                return {
+                    "message": f"The owner of '{original_summary}' is: {owner}",
+                    "results": []
+                }
+            else:
+                return {
+                    "message": f"Could not find a defect matching '{defect_title}' in the database.",
+                    "results": []
+                }
+
+        # Continue with regular search if no direct match
         search_results = FAISS.search(query, embed_model, index, data, top_k=5, threshold=0.8)
-    
+        
         if search_results.empty:
             return {
-                "message": "The query you provided is not found in the dataset. Therefore, I cannot provide a possible solution. Please check the defect summary or provide additional details.",
+                "message": "The query you provided is not found in the dataset. Please try with more specific keywords.",
                 "results": []
             }
 
+        # For other queries, continue with full analysis
         results_with_analysis = []
         for _, row in search_results.iterrows():
             defect_summary = row["Defect Summary"]
-            data = self.get_data(defect_summary)
-            analysis = self.together(query, data, defect_summary)
+            defect_data = self.get_defect_data(defect_summary)
+            analysis, conv_id = self.generate_analysis(query, defect_data, defect_summary, conversation_id)
             relevance_percentage = round((1 - row["distance"] / 0.8) * 100)
             results_with_analysis.append({
                 "defectSummary": defect_summary,
                 "relevance": relevance_percentage,
                 "analysis": analysis
             })
-        
 
         return {
-            "message": "Relevant defects found.",
-            "results": results_with_analysis
+            "message": "Relevant defects found based on your query.",
+            "results": results_with_analysis,
+            "conversation_id": conv_id
         }
-

@@ -33,14 +33,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class ChatRequest(BaseModel):
+    prompt: str
+    conversation_id: str = None
 
 @app.post("/defects/response")
-async def defects_response(request: Request):
-    data = await request.json()
+async def defects_response(chat_request: ChatRequest):
     llm = LLM.initialize()
-    response = llm.response(defects_llm["embed_model"], defects_llm["index"], defects_llm["data"], data['prompt'])
-    datawe = JSONResponse(content={"response": response})
-    print(response)
+    response = llm.response(
+        defects_llm["embed_model"], 
+        defects_llm["index"], 
+        defects_llm["data"], 
+        chat_request.prompt,
+        chat_request.conversation_id
+    )
     return JSONResponse(content={"response": response})
 
 if __name__ == "__main__":
