@@ -221,24 +221,22 @@ class LLM:
                  for h in conversation['history'][-3:]]  # Last 3 exchanges
             )
 
+        # Format bug details with correct owner and clickable link
+        if defect_data:
+            bug_details = f"""Bug Details:
+- ID: {defect_data.get('bug_id', 'N/A')}
+- Summary: {defect_data.get('Defect Summary', 'N/A')}
+- Root Cause: {defect_data.get('rootCause', {}).get('description', 'N/A')}
+- Solution: {defect_data.get('solution', 'N/A')}
+- Owner: {defect_data.get('owner', 'N/A')}
+- Link: <a href="{defect_data.get('bug_url', '#')}" target="_blank">Click here</a>"""
+        else:
+            bug_details = "Bug details not found."
+
         prompt = f"""
-You are Bugbuster, a friendly and knowledgeable System Admin Engineer specializing in troubleshooting. 
-Maintain a conversational tone while providing technical assistance.
+You are Bugbuster. Respond with only the provided bug details, no additional context or questions.
 
-Current Context:
-Defect Summary: {defect_summary}
-Dataset: {defect_data}
-User Query: {question}
-{context}
-
-Please:
-1. Acknowledge any previous context from our conversation
-2. Provide a natural, conversational response that addresses the question
-3. Include technical details when relevant
-4. Ask clarifying questions if needed
-5. Maintain the same format for defect information (JIRA ID, etc.)
-
-Keep the conversation flowing while being technically accurate.
+{bug_details}
 """
         response = self.llm.chat.completions.create(
             model=os.environ["MODEL"],
@@ -275,32 +273,61 @@ Keep the conversation flowing while being technically accurate.
         return result
 
     def normalize_text(self, text):
-        """Normalize text by handling misspellings and formatting"""
-        # Remove special characters and extra spaces
-        text = re.sub(r'[^a-zA-Z0-9\s]', '', text)
+        """Normalize text by handling misspellings and variations"""
+        # Remove special characters except dots
+        text = re.sub(r'[^a-zA-Z0-9\s\.]', '', text)
         # Common misspelling replacements
-        text = text.lower().replace('incorrekt', 'incorrect') \
-                         .replace('maping', 'mapping') \
-                         .replace('profle', 'profile') \
-                         .replace('servise', 'service')
-        # Remove extra spaces and normalize
+        replacements = {
+            'incorrekt': 'incorrect',
+            'maping': 'mapping',
+            'profle': 'profile',
+            'servise': 'service',
+            'misng': 'missing',
+            'detals': 'details',
+            'respons': 'response',
+            'servic': 'service'
+        }
+        
+        text = text.lower()
+        for wrong, right in replacements.items():
+            text = text.replace(wrong, right)
+        
+        # Handle period at the end
+        text = text.rstrip('.')
         return ' '.join(text.split())
 
     def find_best_match(self, defect_title, data):
         """Find best matching defect using improved fuzzy matching"""
         normalized_title = self.normalize_text(defect_title)
-        defect_summaries = data['Defect Summary'].apply(self.normalize_text).tolist()
         
-        # Get close matches with lower cutoff for better fuzzy matching
-        matches = get_close_matches(normalized_title, defect_summaries, n=3, cutoff=0.5)
+        # First try exact match after normalization
+        for _, row in data.iterrows():
+            if self.normalize_text(row['Defect Summary']) == normalized_title:
+                return pd.DataFrame([row])
+        
+        # If no exact match, try fuzzy matching
+        defect_summaries = data['Defect Summary'].apply(self.normalize_text).tolist()
+        matches = get_close_matches(normalized_title, defect_summaries, n=3, cutoff=0.6)
         
         if matches:
-            # Find all potential matches and sort by similarity
-            potential_matches = data[data['Defect Summary'].apply(
-                lambda x: any(self.normalize_text(x) == match for match in matches)
-            )]
-            if not potential_matches.empty:
-                return potential_matches.iloc[[0]]  # Return the best match
+            potential_matches = []
+            for match in matches:
+                matching_idx = data['Defect Summary'].apply(
+                    lambda x: self.normalize_text(x) == match
+                )
+                if any(matching_idx):
+                    potential_matches.append(data[matching_idx].iloc[0])
+            
+            if potential_matches:
+                return pd.DataFrame(potential_matches)
+        
+        # Try partial matching if still no results
+        words = set(normalized_title.split())
+        for _, row in data.iterrows():
+            row_words = set(self.normalize_text(row['Defect Summary']).split())
+            if len(words & row_words) / len(words) >= 0.7:  # 70% word match
+                return pd.DataFrame([row])
+                
         return pd.DataFrame()
 
     def response(self, embed_model, index, data, query, conversation_id=None):
@@ -310,30 +337,105 @@ Keep the conversation flowing while being technically accurate.
         if is_greeting:
             return {"message": greeting_response, "results": []}
 
-        # Extract defect title from quotes if present
-        defect_title_match = re.search(r'["\']([^"\']+)["\']', query)
-        defect_title = defect_title_match.group(1) if defect_title_match else None
+        # Enhanced bug query patterns
+        bug_query_patterns = [
+            r'(?:show|get|find)\s+(?:me\s+)?(?:all\s+)?bugs?\s+(?:by|for|owned\s+by)\s+(.+?)(?:\?|$)',
+            r'(?:what|which)\s+(?:are|is)\s+(?:the\s+)?(?:bugs?|defects?)\s+(?:owned\s+by|of)\s+(.+?)(?:\?|$)',
+            r'(.+?)(?:\'s)\s+(?:bugs?|defects?)(?:\?|$)'
+        ]
 
-        # Check for owner query pattern
-        owner_query = re.search(r'(?:who|what|tell|show)\s+(?:is|are)\s+(?:the\s+)?owner', query, re.IGNORECASE)
-
-        if owner_query and defect_title:
-            print(f"Searching for owner of: {defect_title}")
-            # Use fuzzy matching to find the best match
-            matching_defect = self.find_best_match(defect_title, data)
-            
-            if not matching_defect.empty:
-                owner = matching_defect.iloc[0].get('owner', 'Owner not found')
-                original_summary = matching_defect.iloc[0]['Defect Summary']
+        # Check for bug query
+        for pattern in bug_query_patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                owner_name = match.group(1).strip()
+                matching_defects = data[data['owner'].str.contains(owner_name, case=False, na=False)]
+                
+                if not matching_defects.empty:
+                    bug_list = matching_defects.apply(
+                        lambda x: f"• {x['bug_id']}: {x['Defect Summary']}", 
+                        axis=1
+                    ).tolist()
+                    return {
+                        "message": f"Bugs owned by {owner_name}:\n" + "\n".join(bug_list),
+                        "results": []
+                    }
                 return {
-                    "message": f"The owner of '{original_summary}' is: {owner}",
+                    "message": f"No bugs found for owner: {owner_name}",
                     "results": []
                 }
-            else:
-                return {
-                    "message": f"Could not find a defect matching '{defect_title}' in the database.",
-                    "results": []
-                }
+
+        # Enhanced root cause query patterns
+        root_cause_patterns = [
+            r'(?:what|tell|show)\s+(?:is|are)\s+(?:the\s+)?root\s*(?:cause|reason)\s+(?:of|for)\s+(.+?)(?:\?|$)',
+            r'why\s+did\s+(.+?)\s+(?:happen|occur|fail)(?:\?|$)',
+            r'what\s+caused\s+(.+?)(?:\?|$)'
+        ]
+
+        # Check for root cause query without requiring quotes
+        for pattern in root_cause_patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                defect_title = match.group(1).strip().strip('"\'')
+                print(f"Searching for root cause of: {defect_title}")
+                matching_defect = self.find_best_match(defect_title, data)
+                
+                if not matching_defect.empty:
+                    defect_data = self.get_defect_data(matching_defect.iloc[0]['Defect Summary'])
+                    root_cause = defect_data.get('rootCause', {}).get('description', 'Root cause not found')
+                    return {
+                        "message": f"Root Cause: {root_cause}",
+                        "results": []
+                    }
+                break
+
+        # Enhanced owner query patterns
+        owner_query_patterns = [
+            r'(?:who|what|tell|show)\s+(?:is|are)\s+(?:the\s+)?owner\s+of\s+(.+?)(?:\?|$)',
+            r'who\s+owns\s+(.+?)(?:\?|$)',
+            r'tell\s+me\s+(?:the\s+)?owner\s+of\s+(.+?)(?:\?|$)'
+        ]
+
+        # Check for owner query without requiring quotes
+        for pattern in owner_query_patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                defect_title = match.group(1).strip().strip('"\'')
+                print(f"Searching for owner of: {defect_title}")
+                matching_defect = self.find_best_match(defect_title, data)
+                
+                if not matching_defect.empty:
+                    owner = matching_defect.iloc[0].get('owner', 'Owner not found')
+                    original_summary = matching_defect.iloc[0]['Defect Summary']
+                    return {
+                        "message": f"The owner of '{original_summary}' is: {owner}",
+                        "results": []
+                    }
+                break
+
+        # Enhanced solution query patterns
+        solution_patterns = [
+            r'(?:what|tell|show)\s+(?:is|are|was)\s+(?:the\s+)?solution(?:s)?\s+(?:for|to|of)\s+(.+?)(?:\?|$)',
+            r'how\s+(?:was|were)\s+(.+?)\s+(?:fixed|resolved|solved)(?:\?|$)',
+            r'how\s+(?:to|do\s+(?:you|we|i))?\s+(?:fix|solve|resolve)\s+(.+?)(?:\?|$)'
+        ]
+
+        # Check for solution query
+        for pattern in solution_patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                defect_title = match.group(1).strip().strip('"\'')
+                print(f"Searching for solution of: {defect_title}")
+                matching_defect = self.find_best_match(defect_title, data)
+                
+                if not matching_defect.empty:
+                    defect_data = self.get_defect_data(matching_defect.iloc[0]['Defect Summary'])
+                    solution = defect_data.get('solution', 'Solution not found')
+                    return {
+                        "message": f"Solution: {solution}",
+                        "results": []
+                    }
+                break
 
         # Continue with regular search if no direct match
         search_results = FAISS.search(query, embed_model, index, data, top_k=5, threshold=0.8)
@@ -344,7 +446,7 @@ Keep the conversation flowing while being technically accurate.
                 "results": []
             }
 
-        # For other queries, continue with full analysis
+        # For regular search, update message
         results_with_analysis = []
         for _, row in search_results.iterrows():
             defect_summary = row["Defect Summary"]
@@ -358,7 +460,7 @@ Keep the conversation flowing while being technically accurate.
             })
 
         return {
-            "message": "Relevant defects found based on your query.",
+            "message": f"Found relevant defect information:",
             "results": results_with_analysis,
             "conversation_id": conv_id
         }
