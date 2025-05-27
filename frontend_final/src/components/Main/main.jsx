@@ -24,6 +24,22 @@ const Main = () => {
     scrollToBottom();
   }, [messages]);
 
+  // Add initial message when component mounts
+  useEffect(() => {
+    const initialMessage = {
+      id: Date.now(),
+      sender: "bot",
+      message: "👋 Hello! I'm Bugbuster, your AI assistant for defect resolution. I can help you with:\n\n" +
+               "1. Finding defect owners\n" +
+               "2. Understanding root causes\n" +
+               "3. Getting defect solutions\n" +
+               "4. Searching by JIRA ID\n\n" +
+               "How can I assist you today?",
+      results: []
+    };
+    setMessages([initialMessage]);
+  }, []);
+
   const handleSendMessage = async () => {
     if (!currentMessage.trim()) return;
 
@@ -83,9 +99,14 @@ const Main = () => {
   };
 
   const formatTextWithLinks = (text) => {
+    // Keep existing HTML links
+    if (text.includes('<a href=')) {
+      return text;
+    }
+    // Format plain URLs
     const urlPattern = /(https?:\/\/[^\s]+)/g;
     return text.replace(urlPattern, (url) => {
-      return `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color: blue; text-decoration: underline;">Click here</a>`;
+      return `<a href="${url}" target="_blank" rel="noopener noreferrer">Click here</a>`;
     });
   };
 
@@ -114,7 +135,7 @@ const Main = () => {
       return (
         <div className="bot-response">
           {/* Always show the message */}
-          <p className="bot-message">{msg.message}</p>
+          <p className="bot-message" style={{ whiteSpace: 'pre-line' }}>{msg.message}</p>
           
           {/* If there are results, display them */}
           {msg.results && msg.results.length > 0 && (
@@ -190,17 +211,12 @@ const Main = () => {
 
   return (
     <div className="main">
-      {/* <h2 className="main-title">Welcome to Bugbuster App</h2>
-      <p className="main-description">
-        Chat with Bugbuster to find solutions!
-      </p> */}
       <div className="chat-messages-area" ref={chatContainerRef}>
         {messages.map((msg) => (
           <div key={msg.id} className={`message ${msg.sender}`}>
             {renderMessage(msg)}
           </div>
         ))}
-        {/* No longer need the invisible element since we're using scrollTop directly */}
       </div>
       <div className="chat-input-container">
         <input
