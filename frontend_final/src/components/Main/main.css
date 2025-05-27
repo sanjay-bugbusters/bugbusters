@@ -544,3 +544,22 @@
     margin: 0 2px;
   }
 }
+
+.html-content a {
+  color: #0066cc;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.html-content a:hover {
+  color: #004499;
+}
+
+.bot-message p {
+  margin: 0.5em 0;
+}
+
+.bot-message ul, .bot-message ol {
+  margin: 0.5em 0;
+  padding-left: 2em;
+}

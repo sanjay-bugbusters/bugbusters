@@ -24,6 +24,30 @@ const Main = () => {
     scrollToBottom();
   }, [messages]);
 
+  // Add welcome message when component mounts
+  useEffect(() => {
+    const welcomeMessage = {
+      id: Date.now(),
+      sender: "bot",
+      message: `
+        <div class="welcome-message">
+          <h2>Hello! 👋 I'm Bugbuster</h2>
+          <p>Your AI assistant for defect analysis. Here's how I can help you:</p>
+          <ul class="feature-list">
+            <li>🔍 Finding specific defects</li>
+            <li>📋 Listing all defects</li>
+            <li>👥 Showing defect owners</li>
+            <li>🔎 Analyzing root causes</li>
+            <li>💡 Providing solutions</li>
+          </ul>
+          <p class="prompt-text">How can I assist you today?</p>
+        </div>
+      `,
+      content_type: 'html'
+    };
+    setMessages([welcomeMessage]);
+  }, []); // Empty dependency array means this runs once on mount
+
   const handleSendMessage = async () => {
     if (!currentMessage.trim()) return;
 
@@ -95,13 +119,10 @@ const Main = () => {
 
   const renderMessage = (msg) => {
     if (msg.sender === "user") {
-      // For user messages, just render the text
       return <p>{msg.text}</p>;
     } else if (msg.type === "error") {
-      // For error messages
       return <p className="error-text">{msg.message}</p>;
     } else if (msg.type === "loading") {
-      // For loading messages, show the typing indicator
       return (
         <div className="typing-indicator">
           <span></span>
@@ -110,13 +131,13 @@ const Main = () => {
         </div>
       );
     } else {
-      // For bot messages with possible results
       return (
         <div className="bot-response">
-          {/* Always show the message */}
-          <p className="bot-message">{msg.message}</p>
+          <div 
+            className="bot-message"
+            dangerouslySetInnerHTML={{ __html: msg.message }}
+          />
           
-          {/* If there are results, display them */}
           {msg.results && msg.results.length > 0 && (
             <div className="results-container">
               {msg.results.map((result, index) => (
@@ -190,17 +211,15 @@ const Main = () => {
 
   return (
     <div className="main">
-      {/* <h2 className="main-title">Welcome to Bugbuster App</h2>
-      <p className="main-description">
-        Chat with Bugbuster to find solutions!
-      </p> */}
       <div className="chat-messages-area" ref={chatContainerRef}>
         {messages.map((msg) => (
-          <div key={msg.id} className={`message ${msg.sender}`}>
+          <div 
+            key={msg.id} 
+            className={`message ${msg.sender} ${msg.content_type === 'html' ? 'html-content' : ''}`}
+          >
             {renderMessage(msg)}
           </div>
         ))}
-        {/* No longer need the invisible element since we're using scrollTop directly */}
       </div>
       <div className="chat-input-container">
         <input

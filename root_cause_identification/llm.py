@@ -1,364 +1,386 @@
-import faiss
 import os
-import pandas as pd
-import re
-import random
+from typing import List, Dict, Any
+from urllib.parse import urljoin
 from sentence_transformers import SentenceTransformer
 from together import Together
 from pymongo import MongoClient
-import uuid
-from datetime import datetime, timedelta
-from difflib import get_close_matches
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import re
 
 class DataBase:
+    def __init__(self):
+        self.client = self._initialize_db()
+        self.defect_data = self._load_defect_data()
 
-    @classmethod
-    def initialize(cls):
+    def _initialize_db(self) -> MongoClient:
         try:
-            # Ensure environment variables are set
-            user_name = os.environ.get('USER_NAME')
-            password = os.environ.get('PASSWORD')
-            db_name = os.environ.get('DB_NAME')
-
-            if not user_name or not password or not db_name:
-                raise ValueError("Missing required environment variables: USER_NAME, PASSWORD, or DB_NAME")
-
-            # Establish MongoDB connection
-            conn = MongoClient(f"mongodb+srv://{user_name}:{password}@pocapp.aegpzjw.mongodb.net/")
-            db = conn[db_name]
-            return db
+            conn = MongoClient(f"mongodb+srv://{os.environ['USER_NAME']}:{os.environ['PASSWORD']}@pocapp.aegpzjw.mongodb.net/")
+            return conn[os.environ['DB_NAME']]
         except Exception as e:
-            raise ConnectionError(f"Failed to connect to the database: {e}")
+            raise ConnectionError(f"Failed to connect to MongoDB: {e}")
+
+    def _load_defect_data(self) -> List[Dict]:
+        return list(self.client['defect_cause'].find())
+
+    def get_defects_by_indices(self, indices: List[int]) -> List[Dict]:
+        return [self.defect_data[i] for i in indices]
+
+    def get_defects_by_indices_with_scores(self, indices_scores: List[tuple]) -> List[Dict]:
+        defects = []
+        for idx, score in indices_scores:
+            defect = self.defect_data[idx].copy()  # Make a copy of the defect data
+            defect['relevance_score'] = round(score * 100, 2)  # Convert to percentage
+            defects.append(defect)
+        return defects
+
+    def cleanup(self):
+        if hasattr(self, 'client') and self.client:
+            self.client.close()
 
 class FAISS:
-
-    def __init__(self, embed_model: SentenceTransformer, index: faiss.IndexFlatL2, data: pd.DataFrame):
-        self.embed_model = embed_model
-        self.index = index
-        self.data = data
+    def __init__(self):
+        self.encoder = SentenceTransformer("all-MiniLM-L6-v2")
+        self.defect_embeddings = None
+        self.defect_data = None
 
     @classmethod
     def initialize(cls):
-        embed_model = SentenceTransformer("all-MiniLM-L6-v2")
-        index = faiss.IndexFlatL2(384)
-        conn = DataBase.initialize()
-        data = list(conn['defect_cause'].find())
-        df = pd.DataFrame(data)
-        return cls(embed_model, index, df)
+        return cls()
 
-    def add_documents(self):
-        self.data["Defect Summary"] = self.data["Defect Summary"].astype(str)
-        embeddings = self.embed_model.encode(self.data["Defect Summary"].tolist())
-        self.index.add(embeddings)
-        print("Documents added to FAISS index")
-        return self.embed_model, self.index, self.data
-
-    @staticmethod
-    def search(query, embed_model, index, data, top_k=5, threshold=0.8):
-        # Extract bug ID from query text
-        bug_id_pattern = re.search(r'[A-Z]+-\d+', query.upper())
-        # Enhanced owner name patterns to handle more variations
-        owner_patterns = [
-            r'(?:which|what|show|list|get)\s+(?:are|is)\s+(?:the\s+)?(?:defects?|bugs?|issues?)?\s*(?:by|of|for|owned\s+by)?\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)',  # "which are the bugs by Nishanth"
-            r'(?:defect\s+)?([A-Za-z]+(?:\s+[A-ZaZ]+)?)\s+(?:is|has)\s+created',  # existing pattern
-            r'(?:owner|created by|by)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)',  # "owner Nishanth" or "created by Nishanth"
-            r'([A-Za-z]+(?:\s+[A-Za-z]+)?)\s*(?:\'s)?\s*(?:defects?|bugs?)',  # "Nishanth's bugs"
-            r'^([A-Za-z]+(?:\s+[A-Za-z]+)?)$'  # Just the name
-        ]
-
-        # Check for direct bug ID match first
-        if bug_id_pattern:
-            bug_id = bug_id_pattern.group()
-            direct_match = data[data['bug_id'] == bug_id]
-            if not direct_match.empty:
-                direct_match["distance"] = 0.0
-                print(f"Found direct bug ID match for {bug_id}")
-                return direct_match
-            print(f"No direct match found for bug ID {bug_id}")
-
-        # Enhanced owner name matching with caching
-        owner_name = None
-        for pattern in owner_patterns:
-            match = re.search(pattern, query, re.IGNORECASE)
-            if match:
-                owner_name = match.group(1).strip()
-                break
-
-        # Check for owner match with improved name handling
-        if owner_name:
-            print(f"Searching for defects by owner: {owner_name}")
-            
-            # Try exact match first (case insensitive)
-            owner_match = data[data['owner'].str.lower() == owner_name.lower()]
-            
-            # If no exact match, try partial match
-            if owner_match.empty:
-                owner_match = data[data['owner'].str.lower().str.contains(owner_name.lower(), na=False)]
-            
-            if not owner_match.empty:
-                owner_match = owner_match.sort_values('bug_id', ascending=False).head(top_k)
-                owner_match["distance"] = 0.0
-                print(f"Found {len(owner_match)} defects for owner {owner_name}")
-                return owner_match
-            print(f"No defects found for owner {owner_name}")
-
-        # Continue with semantic search if no direct matches
-        query = query.lower().strip()
-        query_keywords = query.split()
+    def add_documents(self, db_instance: 'DataBase' = None):
+        if db_instance is None:
+            db_instance = DataBase()
         
-        # Optimize context based on search type
-        if bug_id_pattern:
-            threshold = 0.9
-            query = f"{query} defect issue"
-        elif owner_name:  # Changed from owner_patterns to owner_name
-            threshold = 0.9
-            query = f"defects by {owner_name}"  # Simplified query context
-        elif len(query_keywords) < 3:
-            query = " ".join(query_keywords + ["defect", "bug"])
-
-        query_embedding = embed_model.encode([query])
-        distances, indices = index.search(query_embedding, top_k)
+        self.defect_data = db_instance.defect_data
+        if self.defect_data:
+            summaries = [d['Defect Summary'] for d in self.defect_data]
+            self.create_embeddings(summaries)
         
-        # More permissive threshold for bug ID and owner searches
-        search_threshold = threshold + 0.2 if (bug_id_pattern or owner_patterns) else threshold + 0.1
-        valid_indices = [i for i, dist in zip(indices[0], distances[0]) if dist < search_threshold]
+        return {
+            "embed_model": self.encoder,
+            "index": self.defect_embeddings,
+            "data": self.defect_data
+        }
+
+    def create_embeddings(self, texts: List[str]):
+        self.defect_embeddings = self.encoder.encode(texts)
         
-        if not valid_indices:
-            return pd.DataFrame()
+    def semantic_search(self, query: str, top_k: int = 10, threshold: float = 0.3) -> List[tuple]:
+        query_embedding = self.encoder.encode([query])[0]
+        similarities = np.dot(self.defect_embeddings, query_embedding)
+        
+        # Get indices and scores for all results above threshold
+        indices_scores = [(idx, float(score)) for idx, score in enumerate(similarities) if score > threshold]
+        
+        # Sort by score in descending order and take top_k
+        indices_scores.sort(key=lambda x: x[1], reverse=True)
+        return indices_scores[:top_k]
 
-        results = data.iloc[valid_indices].copy()
-        results["distance"] = distances[0][:len(valid_indices)]
-        return results
-
+    def cleanup(self):
+        self.defect_embeddings = None
+        self.defect_data = None
+        if hasattr(self, 'encoder'):
+            del self.encoder
 
 class LLM:
-    def __init__(self, llm: Together):
-        self.llm = llm
-        self.greeting_patterns = {
-            r'\b(hi|hello|hey|greetings|howdy)\b': [
-                "Hello! I'm Bugbuster, your defect resolution assistant. How can I help you today?",
-                "Hi there! I'm here to help with any technical issues. What problem would you like me to solve?",
-                "Hello! I'm ready to assist with troubleshooting. Could you describe the issue you're facing?"
-            ],
-            r'\b(good morning|morning)\b': [
-                "Good morning! I'm Bugbuster, ready to help with any technical issues today."
-            ],
-            r'\b(good afternoon|afternoon)\b': [
-                "Good afternoon! How can I assist with your technical queries today?"
-            ],
-            r'\b(good evening|evening)\b': [
-                "Good evening! I'm here to help resolve any defects or issues you're encountering."
-            ],
-            r'\b(how are you|how\'s it going|how do you do|how are things)\b': [
-                "I'm functioning well and ready to assist with any technical issues. How can I help you today?",
-                "I'm operational and ready to help! What defect or issue would you like assistance with?"
-            ],
-            r'\b(thanks|thank you|thx|ty)\b': [
-                "You're welcome! Let me know if you need any more help with technical issues.",
-                "Happy to help! Feel free to ask if you have any more questions about defects or troubleshooting."
-            ],
-            r'\b(bye|goodbye|see you|farewell)\b': [
-                "Goodbye! Feel free to return whenever you need assistance with defects or technical issues.",
-                "Until next time! I'll be here when you need technical support."
-            ]
+    def __init__(self):
+        self.llm = Together(api_key=os.environ["TOGETHER_API_KEY"])
+        self.context_window = []
+        self.jira_base_url = os.environ.get('JIRA_BASE_URL', 'https://nish09.atlassian.net/browse/')
+        self.system_prompt = """You are Bugbuster, an AI assistant specialized in defect analysis and resolution.
+You have access to a database of defects with their root causes, solutions, and owners.
+
+Guidelines for responses:
+1. Use markdown format for Jira URLs, e.g. [SCRUM-7](https://nish09.atlassian.net/browse/SCRUM-7)
+2. Verify defect IDs against the current valid set: SCRUM-7, SCRUM-8, SCRUM-9, SCRUM-11, SCRUM-13
+3. Indicate when mentioned defect IDs are not in the database
+4. Keep responses focused and technical
+5. Only include information that directly answers the user's query
+
+Provide clear, structured responses that help users understand and resolve defect-related queries."""
+        self.query_types = {
+            'description': ['what is', 'describe', 'explain', 'tell me about'],
+            'error': ['error', 'log', 'exception', 'payload'],
+            'analysis': ['analyze', 'check', 'investigate', 'debug'],
+            'impact': ['impact', 'affect', 'consequence', 'result'],
+            'status': ['status', 'state', 'progress', 'current'],
+            'validation': ['test', 'verify', 'validate', 'qa'],
+            'service': ['service', 'kafka', 'mongodb', 'api', 'downstream']
         }
-        self.fallback_response = "I'm designed to help with technical issues and defect resolution. Could you please describe the problem you're experiencing?"
-        self.conversations = {}  # Store conversation history
-        self.context_window = timedelta(minutes=30)  # Context window for conversations
 
-    def _cleanup_old_conversations(self):
-        current_time = datetime.now()
-        expired = [conv_id for conv_id, conv in self.conversations.items() 
-                  if (current_time - conv['last_updated']) > self.context_window]
-        for conv_id in expired:
-            del self.conversations[conv_id]
+    def _format_conversation_history(self) -> str:
+        if not self.context_window:
+            return ""
+        history = "\n".join([f"User: {turn['user']}\nAssistant: {turn['assistant']}" 
+                           for turn in self.context_window[-3:]])
+        return f"\nRecent conversation:\n{history}"
 
-    def get_or_create_conversation(self, conversation_id=None):
-        self._cleanup_old_conversations()
-        if not conversation_id or conversation_id not in self.conversations:
-            conversation_id = str(uuid.uuid4())
-            self.conversations[conversation_id] = {
-                'history': [],
-                'last_updated': datetime.now(),
-                'context': {}
-            }
-        return conversation_id
+    def _get_query_type(self, query: str) -> str:
+        query_lower = query.lower()
+        for qtype, keywords in self.query_types.items():
+            if any(keyword in query_lower for keyword in keywords):
+                return qtype
+        return 'general'
 
-    def is_greeting(self, text):
-        """Detect if the input is a conversational greeting and return appropriate response"""
-        text = text.lower().strip()
+    def _create_prompt(self, query: str, relevant_defects: List[Dict]) -> str:
+        query_type = self._get_query_type(query)
+        
+        # Handle service-specific queries
+        if query_type == 'service':
+            service_summary = self._format_service_analysis(relevant_defects)
+            if service_summary:
+                return service_summary
 
-        # Optional Enhancement: If it's a bug ID like SCRUM-13, treat it as NOT a greeting
-        if re.match(r'^[A-Z]+-\d+$', text.strip(), re.IGNORECASE):
-            return False, None
+        # Handle error log queries
+        if query_type == 'error':
+            error_summary = self._format_error_logs(relevant_defects)
+            if error_summary:
+                return error_summary
 
-        # Only match if actual greeting keywords are present
-        for pattern, responses in self.greeting_patterns.items():
-            if re.search(pattern, text, re.IGNORECASE):
-                return True, random.choice(responses)
+        # Handle summary/details queries
+        if any(word.upper().startswith('SCRUM-') for word in query.split()):
+            defect_id = next((word.upper() for word in query.split() if word.upper().startswith('SCRUM-')), None)
+            defect = next((d for d in relevant_defects if d['bug_id'] == defect_id), None)
+            
+            if defect:
+                root_cause = defect.get('rootCause', {})
+                root_cause_desc = root_cause.get('description') if isinstance(root_cause, dict) else root_cause
+                
+                return f"""Defect Details for [{defect_id}]({urljoin(self.jira_base_url, defect_id)}):
 
-        # Otherwise, it's not a greeting
-        return False, None
+Summary: {defect['Defect Summary']}
 
-    @classmethod
-    def initialize(cls):
-        try:
-            llm = Together(api_key=os.environ["TOGETHER_API_KEY"])
-            return cls(llm)
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize LLM: {e}")
+Root Cause: {root_cause_desc if root_cause_desc else 'No root cause specified'}
 
-    def generate_analysis(self, question, defect_data, defect_summary, conversation_id=None):
-        conv_id = self.get_or_create_conversation(conversation_id)
-        conversation = self.conversations[conv_id]
-        conversation['last_updated'] = datetime.now()
+Solution: {defect.get('solution', 'No solution specified')}
 
-        # Add context from conversation history
-        context = ""
-        if conversation['history']:
-            context = "\nPrevious conversation:\n" + "\n".join(
-                [f"User: {h['user']}\nAssistant: {h['assistant']}" 
-                 for h in conversation['history'][-3:]]  # Last 3 exchanges
+Owner: {defect.get('owner', 'Unassigned')}
+
+Status: {defect.get('status', 'Unknown')}"""
+
+        # Handle solution queries
+        if any(keyword in query.lower() for keyword in ['solution', 'fix', 'resolve']):
+            mentioned_ids = [word.upper() for word in query.split() if word.upper().startswith('SCRUM-')]
+            if mentioned_ids:
+                defect_id = mentioned_ids[0]
+                defect = next((d for d in relevant_defects if d['bug_id'] == defect_id), None)
+                
+                if defect:
+                    return f"""Solution Details for [{defect_id}]({urljoin(self.jira_base_url, defect_id)}):
+
+Defect Summary: {defect['Defect Summary']}
+
+Solution: {defect.get('solution', 'No solution specified')}
+
+Root Cause: {defect.get('rootCause', {}).get('description', 'N/A')}
+Owner: {defect.get('owner', 'Unassigned')}"""
+
+        # Handle root cause queries
+        elif any(keyword in query.lower() for keyword in ['root', 'cause', 'why']):
+            # Extract defect ID from query
+            mentioned_ids = [word.upper() for word in query.split() if word.upper().startswith('SCRUM-')]
+            if mentioned_ids:
+                defect_id = mentioned_ids[0]
+                defect = next((d for d in relevant_defects if d['bug_id'] == defect_id), None)
+                
+                if defect:
+                    # Extract root cause data properly
+                    root_cause = defect.get('rootCause', {})
+                    root_cause_desc = root_cause.get('description') if isinstance(root_cause, dict) else root_cause
+                    solution = defect.get('solution', 'No solution provided')
+                    
+                    return f"""Root Cause Analysis for [{defect_id}]({urljoin(self.jira_base_url, defect_id)}):
+
+Defect Summary: {defect['Defect Summary']}
+
+Root Cause: {root_cause_desc if root_cause_desc else 'No root cause specified'}
+
+Solution: {solution}
+
+Owner: {defect.get('owner', 'Unassigned')}"""
+
+        table_html = """
+        <div class="defect-table">
+            <table border="1">
+                <thead>
+                    <tr>
+                        <th>Defect ID</th>
+                        <th>Summary</th>
+                        <th>Owner</th>
+                    </tr>
+                </thead>
+                <tbody>
+        """
+        
+        for defect in relevant_defects:
+            bug_id = defect['bug_id']
+            jira_url = urljoin(self.jira_base_url, bug_id)
+            table_html += f"""
+                <tr>
+                    <td><a href="{jira_url}" target="_blank">{bug_id}</a></td>
+                    <td>{defect['Defect Summary']}</td>
+                    <td>{defect.get('owner', 'Unassigned')}</td>
+                </tr>
+            """
+            
+        table_html += """
+                </tbody>
+            </table>
+        </div>
+        """
+
+        if "list" in query.lower() or "all" in query.lower():
+            return f"""Here are all the currently active defects in the system:
+            {table_html}
+            
+            Note: Only these defects are currently in our database. If you're looking for other defect IDs, they may have been resolved or not yet added."""
+        else:
+            defect_context = "\n\n".join([
+                f"Defect: {d['Defect Summary']}\n"
+                f"ID: [{d['bug_id']}]({urljoin(self.jira_base_url, d['bug_id'])})\n"
+                f"Root Cause: {d.get('rootCause', {}).get('description', 'N/A')}\n"
+                f"Solution: {d.get('solution', 'N/A')}\n"
+                f"Owner: {d.get('owner', 'N/A')}"
+                for d in relevant_defects
+            ])
+
+            conversation_history = self._format_conversation_history()
+
+            prompt = f"""{self.system_prompt}
+
+    Available defect information:
+    {defect_context}
+
+    {conversation_history}
+
+    User Query: {query}
+
+    Provide a clear, focused answer based on the available information. If the query is about specific aspects (owner, root cause, solution), only include that information."""
+
+            return prompt
+
+    def _format_response(self, response: str) -> Dict[str, Any]:
+        # Check if response is a solution or root cause analysis
+        if any(prefix in response for prefix in ["Solution Details for", "Root Cause Analysis for"]):
+            markdown_links_pattern = r'\[(.*?)\]\((.*?)\)'
+            converted = response.replace('\n\n', '<br><br>')
+            converted = re.sub(
+                markdown_links_pattern,
+                r'<a href="\2" target="_blank">\1</a>',
+                converted
             )
+            return {
+                "message": converted,
+                "content_type": "text"
+            }
 
-        prompt = f"""
-You are Bugbuster, a friendly and knowledgeable System Admin Engineer specializing in troubleshooting. 
-Maintain a conversational tone while providing technical assistance.
+        # Check if response contains any HTML tags (excluding Markdown links)
+        contains_html = any(tag in response for tag in ['<div', '<table', '<ul', '<li'])
+        
+        if contains_html:
+            # Keep HTML formatting
+            return {
+                "message": response,
+                "content_type": "html"
+            }
+        else:
+            # Convert only markdown links to HTML, keep rest as plain text
+            markdown_links_pattern = r'\[(.*?)\]\((.*?)\)'
+            converted = response.replace('\n', '<br>')
+            converted = re.sub(
+                markdown_links_pattern,
+                r'<a href="\2" target="_blank">\1</a>',
+                converted
+            )
+            return {
+                "message": converted,
+                "content_type": "text"
+            }
 
-Current Context:
-Defect Summary: {defect_summary}
-Dataset: {defect_data}
-User Query: {question}
-{context}
-
-Please:
-1. Acknowledge any previous context from our conversation
-2. Provide a natural, conversational response that addresses the question
-3. Include technical details when relevant
-4. Ask clarifying questions if needed
-5. Maintain the same format for defect information (JIRA ID, etc.)
-
-Keep the conversation flowing while being technically accurate.
-"""
+    def get_response(self, query: str, relevant_defects: List[Dict]) -> Dict[str, Any]:
+        # Add debug logging for all queries
+        if any(word.upper().startswith('SCRUM-') for word in query.split()):
+            defect_id = next((word.upper() for word in query.split() if word.upper().startswith('SCRUM-')), None)
+            print(f"Processing query for defect {defect_id}")
+            defect = next((d for d in relevant_defects if d['bug_id'] == defect_id), None)
+            if defect:
+                print(f"Found defect data: {defect}")
+            else:
+                print(f"No defect found with ID {defect_id}")
+        
+        prompt = self._create_prompt(query, relevant_defects)
         response = self.llm.chat.completions.create(
             model=os.environ["MODEL"],
             messages=[{"role": "user", "content": prompt}]
         )
-        
-        # Update conversation history
-        conversation['history'].append({
-            'user': question,
-            'assistant': response.choices[0].message.content,
+
+        answer = response.choices[0].message.content
+        self.context_window.append({
+            'user': query,
+            'assistant': answer,
             'timestamp': datetime.now()
         })
-        
-        return response.choices[0].message.content, conv_id
 
-    def get_defect_data(self, defect_summary):
-        conn = DataBase.initialize()
-        # Try to find by bug_id first if it matches the pattern
-        if re.match(r'^[A-Z]+-\d+$', defect_summary.strip(), re.IGNORECASE):
-            bug_id = defect_summary.upper()
-            result = conn['defect_cause'].find_one(
-                {"bug_id": bug_id},
-                {"Defect Summary":1, "rootCause":1, "solution":1, "owner":1, "bug_id":1, "bug_url":1}
-            )
-            if result:
-                print(f"Found defect data for bug ID: {bug_id}")
-                return result
+        if len(self.context_window) > 5:
+            self.context_window.pop(0)
 
-        # Fall back to defect summary search
-        result = conn['defect_cause'].find_one(
-            {"Defect Summary": defect_summary},
-            {"Defect Summary":1, "rootCause":1, "solution":1, "owner":1, "bug_id":1, "bug_url":1}
-        )
-        return result
+        return self._format_response(answer)
 
-    def normalize_text(self, text):
-        """Normalize text by handling misspellings and formatting"""
-        # Remove special characters and extra spaces
-        text = re.sub(r'[^a-zA-Z0-9\s]', '', text)
-        # Common misspelling replacements
-        text = text.lower().replace('incorrekt', 'incorrect') \
-                         .replace('maping', 'mapping') \
-                         .replace('profle', 'profile') \
-                         .replace('servise', 'service')
-        # Remove extra spaces and normalize
-        return ' '.join(text.split())
-
-    def find_best_match(self, defect_title, data):
-        """Find best matching defect using improved fuzzy matching"""
-        normalized_title = self.normalize_text(defect_title)
-        defect_summaries = data['Defect Summary'].apply(self.normalize_text).tolist()
-        
-        # Get close matches with lower cutoff for better fuzzy matching
-        matches = get_close_matches(normalized_title, defect_summaries, n=3, cutoff=0.5)
-        
-        if matches:
-            # Find all potential matches and sort by similarity
-            potential_matches = data[data['Defect Summary'].apply(
-                lambda x: any(self.normalize_text(x) == match for match in matches)
-            )]
-            if not potential_matches.empty:
-                return potential_matches.iloc[[0]]  # Return the best match
-        return pd.DataFrame()
-
-    def response(self, embed_model, index, data, query, conversation_id=None):
-        print(f"Processing query: {query}")
-        
-        is_greeting, greeting_response = self.is_greeting(query)
-        if is_greeting:
-            return {"message": greeting_response, "results": []}
-
-        # Extract defect title from quotes if present
-        defect_title_match = re.search(r'["\']([^"\']+)["\']', query)
-        defect_title = defect_title_match.group(1) if defect_title_match else None
-
-        # Check for owner query pattern
-        owner_query = re.search(r'(?:who|what|tell|show)\s+(?:is|are)\s+(?:the\s+)?owner', query, re.IGNORECASE)
-
-        if owner_query and defect_title:
-            print(f"Searching for owner of: {defect_title}")
-            # Use fuzzy matching to find the best match
-            matching_defect = self.find_best_match(defect_title, data)
-            
-            if not matching_defect.empty:
-                owner = matching_defect.iloc[0].get('owner', 'Owner not found')
-                original_summary = matching_defect.iloc[0]['Defect Summary']
-                return {
-                    "message": f"The owner of '{original_summary}' is: {owner}",
-                    "results": []
-                }
-            else:
-                return {
-                    "message": f"Could not find a defect matching '{defect_title}' in the database.",
-                    "results": []
-                }
-
-        # Continue with regular search if no direct match
-        search_results = FAISS.search(query, embed_model, index, data, top_k=5, threshold=0.8)
-        
-        if search_results.empty:
-            return {
-                "message": "The query you provided is not found in the dataset. Please try with more specific keywords.",
-                "results": []
-            }
-
-        # For other queries, continue with full analysis
-        results_with_analysis = []
-        for _, row in search_results.iterrows():
-            defect_summary = row["Defect Summary"]
-            defect_data = self.get_defect_data(defect_summary)
-            analysis, conv_id = self.generate_analysis(query, defect_data, defect_summary, conversation_id)
-            relevance_percentage = round((1 - row["distance"] / 0.8) * 100)
-            results_with_analysis.append({
-                "defectSummary": defect_summary,
-                "relevance": relevance_percentage,
-                "analysis": analysis
-            })
-
-        return {
-            "message": "Relevant defects found based on your query.",
-            "results": results_with_analysis,
-            "conversation_id": conv_id
+    def _format_service_analysis(self, defects: List[Dict]) -> str:
+        services = {
+            'kafka': [],
+            'mongodb': [],
+            'notification': [],
+            'login': [],
+            'policy': []
         }
+        
+        for defect in defects:
+            summary = defect['Defect Summary'].lower()
+            for service in services.keys():
+                if service in summary:
+                    services[service].append(defect)
+        
+        active_services = {k: v for k, v in services.items() if v}
+        if not active_services:
+            return None
+
+        response = "Service-related Issues Analysis:\n\n"
+        for service, issues in active_services.items():
+            response += f"\n{service.upper()} Service Issues:\n"
+            for issue in issues:
+                response += f"- [{issue['bug_id']}]({urljoin(self.jira_base_url, issue['bug_id'])}): {issue['Defect Summary']}\n"
+                if issue.get('rootCause', {}).get('description'):
+                    response += f"  Root Cause: {issue['rootCause']['description']}\n"
+                
+        return response
+
+    def _format_error_logs(self, defects: List[Dict]) -> str:
+        errors = []
+        for defect in defects:
+            if 'Error log' in defect or 'rootCause' in defect and 'analysis' in defect['rootCause']:
+                error_log = defect.get('Error log', defect['rootCause'].get('analysis', {}).get('logs', ''))
+                if error_log:
+                    errors.append({
+                        'id': defect['bug_id'],
+                        'summary': defect['Defect Summary'],
+                        'log': error_log
+                    })
+        
+        if not errors:
+            return None
+
+        response = "Error Log Analysis:\n\n"
+        for error in errors:
+            response += f"[{error['id']}]({urljoin(self.jira_base_url, error['id'])}):\n"
+            response += f"Summary: {error['summary']}\n"
+            response += f"Log: ```\n{error['log']}\n```\n\n"
+        
+        return response
+
+    def cleanup(self):
+        self.context_window.clear()
+        if hasattr(self, 'llm'):
+            del self.llm
