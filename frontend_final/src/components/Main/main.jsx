@@ -46,7 +46,7 @@ const Main = () => {
       ` : `
         <div class="welcome-message">
           <h2>Hello! 👋 I'm UW Rules Assistant</h2>
-          <p>I can help you understand and resolve UV rule violations.</p>
+          <p>I can help you understand and resolve UW rule violations.</p>
           <p>Please provide your policy number and rule code (e.g., E101) for assistance.</p>
         </div>
       `,
@@ -232,7 +232,7 @@ const Main = () => {
           className={`selector-btn ${chatbotType === 'uvrules' ? 'active' : ''}`}
           onClick={() => handleChatbotChange('uvrules')}
         >
-          UV Rules
+          UW Rules
         </button>
       </div>
       <div className="chat-messages-area" ref={chatContainerRef}>
