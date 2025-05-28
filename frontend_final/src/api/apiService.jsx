@@ -1,5 +1,11 @@
 import apiClient from "./axiosConfig";
-import {marked} from "marked"; // Add this import
+import {marked} from "marked";
+
+// Configure marked options
+marked.setOptions({
+  headerIds: false,
+  mangle: false
+});
 
 export const fetchBugbusterResponse = async (issue) => {
   try {
@@ -7,7 +13,20 @@ export const fetchBugbusterResponse = async (issue) => {
       "http://localhost:8000/defects/response",
       { prompt: issue }
     );
-    return response.data.response;
+    
+    const data = response.data.response;
+    
+    // Check if response is in markdown format
+    if (typeof data.message === 'string' && 
+        (data.message.includes('###') || data.message.includes('##') || data.message.includes('#'))) {
+      return {
+        message: `<div class="markdown-content">${marked(data.message)}</div>`,
+        content_type: "html",
+        results: data.results || []
+      };
+    }
+    
+    return data;
   } catch (error) {
     handleApiError(error);
   }

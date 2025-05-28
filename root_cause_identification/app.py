@@ -15,6 +15,7 @@ import bleach  # Add this import
 
 defects_llm = {}
 cleanup_done = False
+valid_defect_ids = set()  # Will be populated during startup
 
 def cleanup_resources():
     global cleanup_done
@@ -35,6 +36,11 @@ async def lifespan(app: FastAPI):
         db = DataBase()
         faiss_data = vs.add_documents(db)
         defects_llm.update(faiss_data)
+        
+        # Get valid defect IDs from database
+        global valid_defect_ids
+        valid_defect_ids = {d['bug_id'] for d in db.defect_data}
+        print(f"Loaded valid defect IDs: {valid_defect_ids}")
         
         yield
     except Exception as e:
@@ -65,23 +71,21 @@ class ChatRequest(BaseModel):
     prompt: str
     conversation_id: str = None
 
-VALID_DEFECT_IDS = {'SCRUM-7', 'SCRUM-8', 'SCRUM-9', 'SCRUM-11', 'SCRUM-13'}
-
 @app.post("/defects/response")
 async def defects_response(chat_request: ChatRequest):
     llm = LLM()
     query = chat_request.prompt.lower()
     db = DataBase()
     
-    # Check if query mentions invalid defect IDs
+    # Check if query mentions invalid defect IDs using dynamic set
     mentioned_ids = set([word.upper() for word in query.split() if word.upper().startswith('SCRUM-')])
-    invalid_ids = mentioned_ids - VALID_DEFECT_IDS
+    invalid_ids = mentioned_ids - valid_defect_ids
     
     if invalid_ids:
         return JSONResponse(content={
             "response": {
                 "message": f"""The following defect IDs are not in the current database: {', '.join(invalid_ids)}
-                <br><br>Currently active defects are: {', '.join(sorted(VALID_DEFECT_IDS))}""",
+                <br><br>Currently active defects are: {', '.join(sorted(valid_defect_ids))}""",
                 "content_type": "html"
             }
         })
@@ -95,7 +99,7 @@ async def defects_response(chat_request: ChatRequest):
     # Special handling for root cause and solution queries
     if any(keyword in query for keyword in ['root', 'cause', 'why', 'solution', 'fix', 'resolve']):
         mentioned_ids = [word.upper() for word in query.split() if word.upper().startswith('SCRUM-')]
-        if mentioned_ids and mentioned_ids[0] in VALID_DEFECT_IDS:
+        if mentioned_ids and mentioned_ids[0] in valid_defect_ids:
             # Get the specific defect directly from database
             relevant_defects = [d for d in db.defect_data if d['bug_id'] == mentioned_ids[0]]
             # Add debug logging
@@ -123,6 +127,34 @@ async def defects_response(chat_request: ChatRequest):
         content={"response": response},
         headers={"Content-Type": "application/json"}
     )
+
+class UVRuleRequest(BaseModel):
+    user_request: str
+
+@app.post("/proxy/uvrules")
+async def proxy_uvrules(request: UVRuleRequest):
+    """Proxy endpoint for UV Rules service"""
+    if not request.user_request.strip():
+        return JSONResponse(content={
+            "message": "Please provide a policy number and rule code (e.g., E101)."
+        })
+
+    try:
+        # For now, return a mock response until UV Rules service is available
+        return JSONResponse(content={
+            "message": "I understand you're asking about UV rules. " + 
+                      "To help you better, please provide:\n" +
+                      "1. Policy Number\n" +
+                      "2. Rule Code (e.g., E101)\n\n" +
+                      "For example: 'Why is rule E101 triggered for policy 12345?'"
+        })
+    except Exception as e:
+        return JSONResponse(
+            content={
+                "message": f"Error processing UV rule request: {str(e)}"
+            },
+            status_code=500
+        )
 
 if __name__ == "__main__":
     try:

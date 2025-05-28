@@ -262,42 +262,50 @@ Owner: {defect.get('owner', 'Unassigned')}"""
             return prompt
 
     def _format_response(self, response: str) -> Dict[str, Any]:
-        # Check if response is a solution or root cause analysis
-        if any(prefix in response for prefix in ["Solution Details for", "Root Cause Analysis for"]):
-            markdown_links_pattern = r'\[(.*?)\]\((.*?)\)'
-            converted = response.replace('\n\n', '<br><br>')
-            converted = re.sub(
-                markdown_links_pattern,
-                r'<a href="\2" target="_blank">\1</a>',
-                converted
-            )
-            return {
-                "message": converted,
-                "content_type": "text"
-            }
-
-        # Check if response contains any HTML tags (excluding Markdown links)
-        contains_html = any(tag in response for tag in ['<div', '<table', '<ul', '<li'])
+        # Extract specific section based on content
+        sections = {
+            'Root Cause': r'Root Cause:\s*(.*?)(?=\n\w+:|$)',
+            'Solution': r'Solution:\s*(.*?)(?=\n\w+:|$)',
+            'Error Log': r'Error Log:\s*(.*?)(?=\n\w+:|$)',
+            'Analysis': r'Analysis:\s*(.*?)(?=\n\w+:|$)',
+            'Summary': r'Summary:\s*(.*?)(?=\n\w+:|$)',
+            'Owner': r'Owner:\s*(.*?)(?=\n\w+:|$)',
+            'Status': r'Status:\s*(.*?)(?=\n\w+:|$)'
+        }
         
-        if contains_html:
-            # Keep HTML formatting
-            return {
-                "message": response,
-                "content_type": "html"
-            }
-        else:
-            # Convert only markdown links to HTML, keep rest as plain text
-            markdown_links_pattern = r'\[(.*?)\]\((.*?)\)'
-            converted = response.replace('\n', '<br>')
-            converted = re.sub(
-                markdown_links_pattern,
-                r'<a href="\2" target="_blank">\1</a>',
-                converted
-            )
-            return {
-                "message": converted,
-                "content_type": "text"
-            }
+        # Convert markdown content to HTML
+        response = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', response)
+        response = re.sub(r'\*(.*?)\*', r'<em>\1</em>', response)
+        response = re.sub(r'(?m)^### (.*?)$', r'<h3>\1</h3>', response)
+        response = re.sub(r'(?m)^## (.*?)$', r'<h2>\1</h2>', response)
+        response = re.sub(r'(?m)^# (.*?)$', r'<h1>\1</h1>', response)
+
+        # Convert markdown links to HTML
+        response = re.sub(r'\[(.*?)\]\((.*?)\)', r'<a href="\2" target="_blank">\1</a>', response)
+        
+        # Check for specific section queries
+        for section_name, pattern in sections.items():
+            if section_name.lower() in response.lower():
+                match = re.search(pattern, response, re.DOTALL)
+                if match:
+                    content = match.group(1).strip()
+                    if content:
+                        return {
+                            "message": f'<div class="section-content"><h3>{section_name}</h3><p>{content}</p></div>',
+                            "content_type": "html"
+                        }
+
+        # Format general response with proper HTML structure
+        html_content = f"""
+        <div class="response-content">
+            {response.replace('\n', '<br>')}
+        </div>
+        """
+        
+        return {
+            "message": html_content,
+            "content_type": "html"
+        }
 
     def get_response(self, query: str, relevant_defects: List[Dict]) -> Dict[str, Any]:
         # Add debug logging for all queries
