@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import "./main.css";
-import { fetchResponse } from "../../api/apiService";
+import { fetchBugbusterResponse, fetchUVRulesResponse } from "../../api/apiService";
 
 const Main = () => {
   const [messages, setMessages] = useState([]);
@@ -8,6 +8,7 @@ const Main = () => {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [expandedIndex, setExpandedIndex] = useState(null);
+  const [chatbotType, setChatbotType] = useState('bugbuster');
   
   // Reference to the chat messages container for auto-scrolling
   const chatContainerRef = useRef(null);
@@ -24,14 +25,14 @@ const Main = () => {
     scrollToBottom();
   }, [messages]);
 
-  // Add welcome message when component mounts
+  // Update welcome message based on chatbot type
   useEffect(() => {
     const welcomeMessage = {
       id: Date.now(),
       sender: "bot",
-      message: `
+      message: chatbotType === 'bugbuster' ? `
         <div class="welcome-message">
-          <h2>Hello! 👋 I'm Bugbuster</h2>
+          <h2>Hello! 👋 I'm Defect Triage Assistant</h2>
           <p>Your AI assistant for defect analysis. Here's how I can help you:</p>
           <ul class="feature-list">
             <li>🔍 Finding specific defects</li>
@@ -42,11 +43,25 @@ const Main = () => {
           </ul>
           <p class="prompt-text">How can I assist you today?</p>
         </div>
+      ` : `
+        <div class="welcome-message">
+          <h2>Hello! 👋 I'm UW Rules Assistant</h2>
+          <p>I can help you understand and resolve UV rule violations.</p>
+          <p>Please provide your policy number and rule code (e.g., E101) for assistance.</p>
+        </div>
       `,
       content_type: 'html'
     };
     setMessages([welcomeMessage]);
-  }, []); // Empty dependency array means this runs once on mount
+  }, [chatbotType]); // Empty dependency array means this runs once on mount
+
+  const handleChatbotChange = (type) => {
+    setChatbotType(type);
+    setMessages([]);
+    setCurrentMessage('');
+    setError('');
+    setExpandedIndex(null);
+  };
 
   const handleSendMessage = async () => {
     if (!currentMessage.trim()) return;
@@ -72,9 +87,10 @@ const Main = () => {
     setIsLoading(true);
     setError("");
     try {
-      const data = await fetchResponse(currentMessage);
-      // console.log("API Response:", data);
-      
+      const data = chatbotType === 'bugbuster' 
+        ? await fetchBugbusterResponse(currentMessage)
+        : await fetchUVRulesResponse(currentMessage);
+      console.log("API Response:", data);
       // Create bot message object that includes the entire response
       const botMessage = { 
         id: Date.now() + 2,
@@ -151,12 +167,6 @@ const Main = () => {
                         <strong>Defect Summary:</strong> {result.defectSummary}
                       </span>
                     </div>
-                    {/* <button
-                      className="detail-view-btn"
-                      onClick={() => toggleExpand(index)}
-                    >
-                      {expandedIndex === index ? "Hide Details" : "View Details"}
-                    </button> */}
                   </div>
                   
                   {expandedIndex === index && (
@@ -211,6 +221,20 @@ const Main = () => {
 
   return (
     <div className="main">
+      <div className="chatbot-selector">
+        <button 
+          className={`selector-btn ${chatbotType === 'bugbuster' ? 'active' : ''}`}
+          onClick={() => handleChatbotChange('bugbuster')}
+        >
+          Defect Triage
+        </button>
+        <button 
+          className={`selector-btn ${chatbotType === 'uvrules' ? 'active' : ''}`}
+          onClick={() => handleChatbotChange('uvrules')}
+        >
+          UV Rules
+        </button>
+      </div>
       <div className="chat-messages-area" ref={chatContainerRef}>
         {messages.map((msg) => (
           <div 
@@ -221,6 +245,7 @@ const Main = () => {
           </div>
         ))}
       </div>
+      
       <div className="chat-input-container">
         <input
           type="text"
@@ -230,6 +255,14 @@ const Main = () => {
           onChange={(e) => setCurrentMessage(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
         />
+        <select 
+          className="chatbot-select"
+          value={chatbotType}
+          onChange={(e) => handleChatbotChange(e.target.value)}
+        >
+          <option value="bugbuster">Defect Triage</option>
+          <option value="uvrules">UW Rules</option>
+        </select>
         <button className="chat-send-button" onClick={handleSendMessage}>
           Send
         </button>

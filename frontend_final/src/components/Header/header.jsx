@@ -4,7 +4,7 @@ import "./header.css";
 const Header = () => {
   return (
     <header className="header">
-      <h1 className="header-title">Bugbuster App</h1>
+      <h1 className="header-title">TravBlitz Bot</h1>
     </header>
   );
 };
