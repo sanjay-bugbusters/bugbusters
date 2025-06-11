@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import re
+import markdown2
 
 class DataBase:
     def __init__(self):
@@ -89,17 +90,27 @@ class LLM:
         self.llm = Together(api_key=os.environ["TOGETHER_API_KEY"])
         self.context_window = []
         self.jira_base_url = os.environ.get('JIRA_BASE_URL', 'https://nish09.atlassian.net/browse/')
-        self.system_prompt = """You are Bugbuster, an AI assistant specialized in defect analysis and resolution.
-You have access to a database of defects with their root causes, solutions, and owners.
+        self.system_prompt = """You are Bugbuster, a friendly AI assistant that helps with defect analysis.
 
-Guidelines for responses:
-1. Use markdown format for Jira URLs, e.g. [SCRUM-7](https://nish09.atlassian.net/browse/SCRUM-7)
-2. Verify defect IDs against the current valid set: SCRUM-7, SCRUM-8, SCRUM-9, SCRUM-11, SCRUM-13
-3. Indicate when mentioned defect IDs are not in the database
-4. Keep responses focused and technical
-5. Only include information that directly answers the user's query
+Keep your responses simple and clear, like this:
+1. Start with a direct answer to the question
+2. Add relevant details or examples if needed
+3. End with "Summary: " followed by 1-2 sentences highlighting key points
 
-Provide clear, structured responses that help users understand and resolve defect-related queries."""
+Format:
+- Use bullet points for lists
+- Keep sentences short
+- Highlight important terms in **bold**
+- Link Jira tickets like [SCRUM-7](https://nish09.atlassian.net/browse/SCRUM-7)
+
+Example response:
+The login issue in [SCRUM-15] is caused by **event handling problems** in the mobile UI.
+
+- Issue affects mobile users only
+- Root cause: Touch events not being captured
+- Solution: Update event listeners
+
+Summary: Mobile login needs UI event handling fixes. Team should focus on touch event listeners."""
         self.query_types = {
             'description': ['what is', 'describe', 'explain', 'tell me about'],
             'error': ['error', 'log', 'exception', 'payload'],
@@ -262,48 +273,25 @@ Owner: {defect.get('owner', 'Unassigned')}"""
             return prompt
 
     def _format_response(self, response: str) -> Dict[str, Any]:
-        # Extract specific section based on content
-        sections = {
-            'Root Cause': r'Root Cause:\s*(.*?)(?=\n\w+:|$)',
-            'Solution': r'Solution:\s*(.*?)(?=\n\w+:|$)',
-            'Error Log': r'Error Log:\s*(.*?)(?=\n\w+:|$)',
-            'Analysis': r'Analysis:\s*(.*?)(?=\n\w+:|$)',
-            'Summary': r'Summary:\s*(.*?)(?=\n\w+:|$)',
-            'Owner': r'Owner:\s*(.*?)(?=\n\w+:|$)',
-            'Status': r'Status:\s*(.*?)(?=\n\w+:|$)'
-        }
-        
-        # Convert markdown content to HTML
-        response = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', response)
-        response = re.sub(r'\*(.*?)\*', r'<em>\1</em>', response)
-        response = re.sub(r'(?m)^### (.*?)$', r'<h3>\1</h3>', response)
-        response = re.sub(r'(?m)^## (.*?)$', r'<h2>\1</h2>', response)
-        response = re.sub(r'(?m)^# (.*?)$', r'<h1>\1</h1>', response)
+        # Ensure response has a summary
+        if "Summary:" not in response:
+            last_paragraph = "\n\nSummary: Key points from the response."
+            response += last_paragraph
 
-        # Convert markdown links to HTML
-        response = re.sub(r'\[(.*?)\]\((.*?)\)', r'<a href="\2" target="_blank">\1</a>', response)
-        
-        # Check for specific section queries
-        for section_name, pattern in sections.items():
-            if section_name.lower() in response.lower():
-                match = re.search(pattern, response, re.DOTALL)
-                if match:
-                    content = match.group(1).strip()
-                    if content:
-                        return {
-                            "message": f'<div class="section-content"><h3>{section_name}</h3><p>{content}</p></div>',
-                            "content_type": "html"
-                        }
+        # Add visual separation for the summary
+        response = response.replace("Summary:", "\n---\n**Summary:**")
 
-        # Format general response with proper HTML structure
-        html_content = f"""
-        <div class="response-content">
-            {response.replace('\n', '<br>')}
+        # Convert markdown and add styling
+        html_response = f"""
+        <div class="response-card">
+            <div class="response-content">
+                {markdown2.markdown(response, extras=['fenced-code-blocks'])}
+            </div>
         </div>
         """
         
         return {
-            "message": html_content,
+            "message": html_response,
             "content_type": "html"
         }
 
