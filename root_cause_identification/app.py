@@ -84,9 +84,18 @@ async def defects_response(chat_request: ChatRequest):
     if invalid_ids:
         return JSONResponse(content={
             "response": {
-                "message": f"""The following defect IDs are not in the current database: {', '.join(invalid_ids)}
-                <br><br>Currently active defects are: {', '.join(sorted(valid_defect_ids))}""",
-                "content_type": "html"
+                "message": f"""**Invalid Defect IDs**
+
+The following defect IDs are not in the current database:
+- {', '.join(invalid_ids)}
+
+**Currently Active Defects:**
+- {', '.join(sorted(valid_defect_ids))}
+
+---
+**Summary:**
+Please check the list of active defects above and try your query with a valid defect ID.""",
+                "content_type": "markdown"
             }
         })
 

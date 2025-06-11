@@ -273,10 +273,31 @@ Owner: {defect.get('owner', 'Unassigned')}"""
             return prompt
 
     def _format_response(self, response: str) -> Dict[str, Any]:
-        # Ensure response has a summary
+        # Generate summary if not found
         if "Summary:" not in response:
-            last_paragraph = "\n\nSummary: Key points from the response."
-            response += last_paragraph
+            # Split response into lines and extract key information
+            lines = response.split('\n')
+            key_points = []
+            
+            # Get first line as main point
+            if lines:
+                first_line = lines[0].strip()
+                if first_line:
+                    key_points.append(first_line)
+            
+            # Look for important keywords
+            for line in lines:
+                line = line.lower().strip()
+                if any(key in line for key in ['root cause:', 'solution:', 'status:', 'owner:', 'impact:']):
+                    key_points.append(line)
+            
+            # Create summary from key points or use default
+            if key_points:
+                summary = " ".join(key_points[:3])  # Use first 3 key points
+            else:
+                summary = "Key points from the analysis"
+                
+            response += f"\n\nSummary: {summary}"
 
         # Add visual separation for the summary
         response = response.replace("Summary:", "\n---\n**Summary:**")
