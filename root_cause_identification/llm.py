@@ -9,6 +9,8 @@ import numpy as np
 from datetime import datetime
 import re
 import markdown2
+from knowledge_base import ISSUE_KNOWLEDGE_BASE, PatternAnalyzer
+from issue_analyzer import IssueAnalyzer
 
 class DataBase:
     def __init__(self):
@@ -44,8 +46,8 @@ class FAISS:
     def __init__(self):
         self.encoder = SentenceTransformer("all-MiniLM-L6-v2")
         self.defect_embeddings = None
-        self.defect_data = None
-
+        self.defect_data = None  # Fix: Initialize defect_data as None
+    
     @classmethod
     def initialize(cls):
         return cls()
@@ -120,6 +122,7 @@ Summary: Mobile login needs UI event handling fixes. Team should focus on touch 
             'validation': ['test', 'verify', 'validate', 'qa'],
             'service': ['service', 'kafka', 'mongodb', 'api', 'downstream']
         }
+        self.pattern_analyzer = PatternAnalyzer()
 
     def _format_conversation_history(self) -> str:
         if not self.context_window:
@@ -136,8 +139,92 @@ Summary: Mobile login needs UI event handling fixes. Team should focus on touch 
         return 'general'
 
     def _create_prompt(self, query: str, relevant_defects: List[Dict]) -> str:
+        query_lower = query.lower()
         query_type = self._get_query_type(query)
+
+        # Handle root cause queries directly
+        if any(keyword in query_lower for keyword in ['root cause', 'why', 'reason']):
+            # For specific SCRUM tickets
+            mentioned_ids = [word.upper() for word in query.split() if word.upper().startswith('SCRUM-')]
+            if mentioned_ids:
+                defect_id = mentioned_ids[0]
+                defect = next((d for d in relevant_defects if d['bug_id'] == defect_id), None)
+                if defect:
+                    root_cause = defect.get('rootCause', {})
+                    root_cause_desc = root_cause.get('description') if isinstance(root_cause, dict) else root_cause
+                    if root_cause_desc:
+                        return f"""**Root Cause**: {root_cause_desc}
+
+Summary: {root_cause_desc[:100]}..."""
+            
+            # For Kafka duplicate messages
+            if 'kafka' in query_lower and 'duplicate' in query_lower:
+                return """**Root Causes:**
+- Consumer group rebalancing causing message reprocessing
+- Multiple consumer instances with same group.id
+- Network issues causing offset commit failures
+- Manual offset reset or incorrect offset management
+
+Summary: Kafka duplicates mainly occur due to consumer group management and network issues."""
+
+        # Match patterns in the query
+        matches = self.pattern_analyzer.match_pattern(query_lower)
         
+        if matches:
+            # Use the first matching pattern for response
+            match = matches[0]
+            if any(keyword in query_lower for keyword in ['root cause', 'why', 'reason']):
+                causes = match['data']['root_causes']
+                return f"""Root Causes for {match['category'].title()} Issue:
+
+{chr(10).join(f'- {cause}' for cause in causes)}
+
+Summary: The {match['category']} issue typically occurs due to {causes[0].lower()}."""
+            
+            elif any(keyword in query_lower for keyword in ['solution', 'fix', 'resolve', 'how to solve']):
+                solutions = match['data']['solutions']
+                return f"""Solutions for {match['category'].title()} Issue:
+
+{chr(10).join(f'- {solution}' for solution in solutions)}
+
+Summary: To resolve {match['category']} issues, focus on {solutions[0].lower()}."""
+
+        query_lower = query.lower()
+        
+        # Handle root cause queries
+        if any(keyword in query_lower for keyword in ['root cause', 'why', 'reason']):
+            if 'kafka' in query_lower and 'duplicate' in query_lower:
+                causes = ISSUE_KNOWLEDGE_BASE["kafka_duplicates"]["root_causes"]
+                return f"""Root Causes for Kafka Duplicate Messages:
+
+{chr(10).join(f'- {cause}' for cause in causes)}
+
+Summary: Kafka message duplication typically occurs due to consumer group management issues, network problems, or configuration mismatches."""
+
+            # Handle specific defect root cause queries
+            mentioned_ids = [word.upper() for word in query.split() if word.upper().startswith('SCRUM-')]
+            if mentioned_ids:
+                defect_id = mentioned_ids[0]
+                defect = next((d for d in relevant_defects if d['bug_id'] == defect_id), None)
+                if defect:
+                    root_cause = defect.get('rootCause', {})
+                    root_cause_desc = root_cause.get('description') if isinstance(root_cause, dict) else root_cause
+                    return f"""Root Cause Analysis for {defect_id}:
+
+{root_cause_desc if root_cause_desc else 'No root cause specified'}
+
+Summary: The root cause analysis shows that {root_cause_desc[:100]}..."""
+
+        # Handle solution queries
+        elif any(keyword in query_lower for keyword in ['solution', 'fix', 'resolve', 'how to solve']):
+            if 'kafka' in query_lower and 'duplicate' in query_lower:
+                solutions = ISSUE_KNOWLEDGE_BASE["kafka_duplicates"]["solutions"]
+                return f"""Solutions for Kafka Duplicate Messages:
+
+{chr(10).join(f'- {solution}' for solution in solutions)}
+
+Summary: To prevent Kafka message duplication, focus on proper configuration and implementing idempotent processing."""
+
         # Handle service-specific queries
         if query_type == 'service':
             service_summary = self._format_service_analysis(relevant_defects)
@@ -273,34 +360,10 @@ Owner: {defect.get('owner', 'Unassigned')}"""
             return prompt
 
     def _format_response(self, response: str) -> Dict[str, Any]:
-        # Generate summary if not found
         if "Summary:" not in response:
-            # Split response into lines and extract key information
             lines = response.split('\n')
-            key_points = []
-            
-            # Get first line as main point
-            if lines:
-                first_line = lines[0].strip()
-                if first_line:
-                    key_points.append(first_line)
-            
-            # Look for important keywords
-            for line in lines:
-                line = line.lower().strip()
-                if any(key in line for key in ['root cause:', 'solution:', 'status:', 'owner:', 'impact:']):
-                    key_points.append(line)
-            
-            # Create summary from key points or use default
-            if key_points:
-                summary = " ".join(key_points[:3])  # Use first 3 key points
-            else:
-                summary = "Key points from the analysis"
-                
-            response += f"\n\nSummary: {summary}"
-
-        # Add visual separation for the summary
-        response = response.replace("Summary:", "\n---\n**Summary:**")
+            summary = next((line for line in lines if line.strip().startswith('**Root Cause')), lines[0])
+            response += f"\n\n---\n**Summary:** {summary}"
 
         # Convert markdown and add styling
         html_response = f"""
