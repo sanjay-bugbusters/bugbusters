@@ -11,7 +11,8 @@ from jira_data_loader import load_data_from_jira
 from fastapi.middleware.cors import CORSMiddleware
 import signal
 import markdown2
-import bleach  # Add this import
+import bleach
+from typing import List, Dict  # Add this import
 
 defects_llm = {}
 cleanup_done = False
@@ -27,13 +28,19 @@ def cleanup_resources():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
+        # Load environment variables
         BASE_DIR = Path(__file__).absolute().parent
         ENV_PATH = os.path.join(BASE_DIR, ".env")
         load_dotenv(ENV_PATH)
-        load_data_from_jira()
         
-        vs = FAISS.initialize()
+        # Initialize database first
         db = DataBase()
+        if not db.defect_data:  # Ensure data is loaded
+            load_data_from_jira()
+            db = DataBase()  # Reinitialize after loading data
+        
+        # Initialize FAISS with loaded data
+        vs = FAISS.initialize()
         faiss_data = vs.add_documents(db)
         defects_llm.update(faiss_data)
         

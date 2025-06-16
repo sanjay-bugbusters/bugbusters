@@ -15,7 +15,8 @@ from issue_analyzer import IssueAnalyzer
 class DataBase:
     def __init__(self):
         self.client = self._initialize_db()
-        self.defect_data = self._load_defect_data()
+        self.defect_data = None  # Initialize as None first
+        self._load_defect_data()  # Load data after client initialization
 
     def _initialize_db(self) -> MongoClient:
         try:
@@ -24,8 +25,13 @@ class DataBase:
         except Exception as e:
             raise ConnectionError(f"Failed to connect to MongoDB: {e}")
 
-    def _load_defect_data(self) -> List[Dict]:
-        return list(self.client['defect_cause'].find())
+    def _load_defect_data(self) -> None:
+        """Load defect data from MongoDB"""
+        try:
+            self.defect_data = list(self.client['defect_cause'].find())
+        except Exception as e:
+            print(f"Error loading defect data: {e}")
+            self.defect_data = []
 
     def get_defects_by_indices(self, indices: List[int]) -> List[Dict]:
         return [self.defect_data[i] for i in indices]
@@ -138,9 +144,137 @@ Summary: Mobile login needs UI event handling fixes. Team should focus on touch 
                 return qtype
         return 'general'
 
+    def _get_service_specific_defects(self, query: str, defects: List[Dict]) -> Dict:
+        """Get service-specific defect info with exact matching"""
+        query_lower = query.lower()
+        
+        # Extract service name from query
+        for defect in defects:
+            summary = defect['Defect Summary'].lower()
+            # Match service name and any additional context from query
+            service_keywords = ['service', 'kafka', 'mongodb', 'notification', 'policy', 'ecam', 'login']
+            matched_service = next((word for word in summary.split() 
+                                 if word in service_keywords and word in query_lower), None)
+            
+            if matched_service:
+                return {
+                    'defect': defect,
+                    'service_name': matched_service.upper(),
+                    'root_cause': defect.get('rootCause', {}).get('description', ''),
+                    'solution': defect.get('solution', 'No solution specified')
+                }
+        return None
+
+    def _get_detailed_defect_info(self, defect: Dict) -> str:
+        """Format comprehensive defect information directly from data source"""
+        bug_id = defect['bug_id']
+        jira_url = urljoin(self.jira_base_url, bug_id)
+        
+        # Get all details from the defect data
+        details = f"""**Detailed Analysis for [{bug_id}]({jira_url})**
+
+**Defect Summary:**
+{defect['Defect Summary']}
+
+**Description:**
+{defect.get('Description', 'No description available')}
+
+**Root Cause Analysis:**
+{defect.get('rootCause', {}).get('description', 'No root cause specified')}
+
+**Error Logs:**
+```
+{defect.get('Error log from Kafka consumer', 'No error logs available')}
+```
+
+**Solution:**
+{defect.get('solution', 'No solution specified')}
+
+**Additional Information:**
+- Owner: {defect.get('owner', 'Unassigned')}
+- Status: {defect.get('status', 'Unknown')}
+
+Summary: Comprehensive analysis of {defect['Defect Summary']} with root cause and solution details."""
+        
+        return details
+
+    def _get_focused_solution(self, defect: Dict) -> str:
+        """Format solution with bullet points on separate lines"""
+        solution = defect.get('solution', '')
+        if not solution:
+            return "No solution specified"
+        
+        # Format solution points with proper line breaks
+        if '\n' in solution:
+            solution_points = [s.strip() for s in solution.split('\n') if s.strip()]
+            formatted_solution = '\n'.join(f'* {point}' for point in solution_points if not point.startswith('*'))
+        else:
+            formatted_solution = solution
+        
+        return f"""**Solution for [{defect['bug_id']}]:**
+
+{formatted_solution}
+
+Summary: Fix by implementing the listed solutions with focus on {solution_points[0].lower() if solution_points else solution.lower()}"""
+
     def _create_prompt(self, query: str, relevant_defects: List[Dict]) -> str:
         query_lower = query.lower()
-        query_type = self._get_query_type(query)
+        
+        # For single-point solution queries
+        if any(phrase in query_lower for phrase in ['single solution', 'single point', 'quick fix']):
+            mentioned_ids = [word.upper() for word in query.split() if word.upper().startswith('SCRUM-')]
+            if mentioned_ids:
+                defect_id = mentioned_ids[0]
+                defect = next((d for d in relevant_defects if d['bug_id'] == defect_id), None)
+                if defect:
+                    return self._get_focused_solution(defect)
+                    
+
+        # Handle detailed defect queries
+        if any(keyword in query_lower for keyword in ['detail', 'more info', 'tell me about']):
+            mentioned_ids = [word.upper() for word in query.split() if word.upper().startswith('SCRUM-')]
+            if mentioned_ids:
+                defect_id = mentioned_ids[0]
+                defect = next((d for d in relevant_defects if d['bug_id'] == defect_id), None)
+                if defect:
+                    return self._get_detailed_defect_info(defect)
+
+        # Handle service-specific queries with exact matching
+        service_info = self._get_service_specific_defects(query, relevant_defects)
+        if service_info:
+            # For root cause queries
+            if any(keyword in query_lower for keyword in ['root cause', 'why', 'reason']):
+                return f"""**Root Cause for {service_info['service_name']} Service Issue:**
+{service_info['root_cause']}
+
+Summary: Issue in {service_info['service_name']} service caused by {service_info['root_cause'][:100]}..."""
+            
+            # For solution queries
+            elif any(keyword in query_lower for keyword in ['solution', 'fix', 'resolve']):
+                return f"""**Solution for {service_info['service_name']} Service Issue:**
+{service_info['solution']}
+
+Summary: {service_info['service_name']} service issue resolved by implementing the specified solution."""
+
+        # Handle ECAM service specific queries
+        if 'ecam' in query_lower and any(keyword in query_lower for keyword in ['missing', 'policy', 'details']):
+            ecam_defects = [d for d in relevant_defects if 'ECAM' in d['Defect Summary']]
+            if ecam_defects:
+                defect = ecam_defects[0]  # Get the most relevant ECAM defect
+                root_cause = defect.get('rootCause', {})
+                root_cause_desc = root_cause.get('description') if isinstance(root_cause, dict) else root_cause
+                
+                if 'root cause' in query_lower or 'why' in query_lower:
+                    return f"""**Root Cause for ECAM Service Issue:**
+{root_cause_desc}
+
+Summary: The ECAM service issue occurs due to {root_cause_desc[:100]}..."""
+                
+                elif 'solution' in query_lower:
+                    return f"""**Solution for ECAM Service Issue:**
+{defect.get('solution', 'No solution specified')}
+
+Summary: The ECAM service issue can be resolved by implementing proper timing controls and data validation."""
 
         # Handle root cause queries directly
         if any(keyword in query_lower for keyword in ['root cause', 'why', 'reason']):
@@ -226,6 +360,7 @@ Summary: The root cause analysis shows that {root_cause_desc[:100]}..."""
 Summary: To prevent Kafka message duplication, focus on proper configuration and implementing idempotent processing."""
 
         # Handle service-specific queries
+        query_type = self._get_query_type(query)
         if query_type == 'service':
             service_summary = self._format_service_analysis(relevant_defects)
             if service_summary:

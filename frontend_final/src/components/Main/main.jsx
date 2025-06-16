@@ -32,12 +32,9 @@ const Main = () => {
       sender: "bot",
       message: chatbotType === 'bugbuster' ? `
         <div class="welcome-message">
-          <h2>Hello! 👋 I'm Defect Triage Assistant</h2>
+          <h2>Hello! 👋 I'm Defect Assistant</h2>
           <p>Your AI assistant for defect analysis. Here's how I can help you:</p>
           <ul class="feature-list">
-            <li>🔍 Finding specific defects</li>
-            <li>📋 Listing all defects</li>
-            <li>👥 Showing defect owners</li>
             <li>🔎 Analyzing root causes</li>
             <li>💡 Providing solutions</li>
           </ul>
