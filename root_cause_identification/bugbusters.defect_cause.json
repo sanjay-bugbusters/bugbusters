@@ -1,109 +1,6 @@
-[{
+a[{
   "_id": {
-    "$oid": "682dbcec06eda39851b56c38"
-  },
-  "Defect Summary": "Missing policy details in Kafka response for ECAM Service.",
-  "Description": "A critical issue was identified in the ECAM Service where Kafka messages were missing essential policy details. This caused downstream systems to fail when retrieving policy information, leading to service disruptions.",
-  "rootCause": {
-    "description": "The issue occurred due to a race condition between the policy data update process and the Kafka producer. The MongoDB document was being updated asynchronously, but the Kafka producer was fetching the policy details before the update was committed. As a result, the messages sent to Kafka contained outdated or incomplete policy details, causing failures in downstream systems relying on this information. This was confirmed by analyzing the logs and database timestamps, which showed a delay between the update and Kafka message generation.",
-    "analysis": {
-      "logs": ""
-    }
-  },
-  "Error log from Kafka consumer": "Error: Policy details are incomplete in the received payload. XML Payload Sample <Policy> <ID>12345</ID> <Details></Details>  <!-- Missing details --> </Policy>",
-  "solution": "The issue was resolved by implementing a retry mechanism in the Kafka producer to fetch the latest policy details from MongoDB before sending messages. Additionally, a delay was introduced to ensure that the database update process was completed before the Kafka message generation. These fixes were validated in the QA environment under different load conditions, and after successful testing, the solution was deployed to production. No further incidents were reported, and downstream systems are now receiving accurate policy details consistently.",
-  "owner": "Nishanth Anbazhagan",
-  "bug_id": "SCRUM-13",
-  "bug_url": "https://nish09.atlassian.net/browse/SCRUM-13"
-},
-{
-  "_id": {
-    "$oid": "682dbced06eda39851b56c39"
-  },
-  "Defect Summary": "Message Duplication in Notification Service",
-  "Description": "End users were receiving duplicate notifications due to repeated message processing in the service.",
-  "rootCause": {
-    "description": "A bug in the message deduplication logic caused the service to reprocess already delivered messages.",
-    "analysis": {
-      "logs": "Error log: 'Duplicate message detected with ID: 12345.'"
-    }
-  },
-  "solution": "Fixed the deduplication logic and implemented an additional safeguard by tracking processed message IDs in a cache. Deployed and monitored post-fix, confirming the issue was resolved.",
-  "owner": "Unassigned",
-  "bug_id": "SCRUM-11",
-  "bug_url": "https://nish09.atlassian.net/browse/SCRUM-11"
-},
-{
-  "_id": {
-    "$oid": "682dbced06eda39851b56c3a"
-  },
-  "Defect Summary": "Authentication Failure in Login Service",
-  "Description": "Users were unable to log in due to repeated authentication failures, impacting the overall user experience.",
-  "rootCause": {
-    "description": "The login service's token validation mechanism failed due to a mismatch in the signing algorithm between services.",
-    "analysis": {
-      "logs": "Error log: 'JWT signature verification failed.'"
-    }
-  },
-  "solution": "Aligned the signing algorithm between services and added fallback logic for token revalidation. Deployed the fix after QA approval.",
-  "owner": "Unassigned",
-  "bug_id": "SCRUM-9",
-  "bug_url": "https://nish09.atlassian.net/browse/SCRUM-9"
-},
-{
-  "_id": {
-    "$oid": "682dbcee06eda39851b56c3b"
-  },
-  "Defect Summary": "Incorrect Data Mapping in User Profile Service",
-  "Description": "User profile updates were being stored with incorrect or missing fields, leading to inconsistencies in the database.",
-  "rootCause": {
-    "description": "The data mapping configuration in the ORM layer was outdated, resulting in mismatched fields during database updates.",
-    "analysis": {
-      "logs": "Error log: 'Field not found exception for field: user_name.'"
-    }
-  },
-  "solution": "Updated the ORM mapping configuration and added validation checks to prevent similar issues in the future. Tested thoroughly in staging before deploying to production.",
-  "owner": "Nishanth Anbazhagan",
-  "bug_id": "SCRUM-8",
-  "bug_url": "https://nish09.atlassian.net/browse/SCRUM-8"
-},
-{
-  "_id": {
-    "$oid": "682dbcef06eda39851b56c3c"
-  },
-  "Defect Summary": "Missing policy details in Kafka response for Policy Lookup Service.",
-  "Description": "A critical issue was identified in the Policy Lookup Service where the Kafka messages were missing essential policy details. This caused downstream systems to fail when retrieving policy information, leading to service disruptions.",
-  "rootCause": {
-    "description": "The issue occur due to a misisng feild mapping between the MongoDB document and the Kafka prodcer payload format. The policy numbr was not included in the Kafka mesage, causng downstream systms to fail while retriving policy details. This was identfied from the logs showing errors relatd to missing fields in payloads.",
-    "analysis": {
-      "logs": ""
-    }
-  },
-  "Error log from Kafka consumer": "'Policy number not found in the payload.' XML Payload Sample <Policy> <ID>12345</ID> <Details>...</Details> </Policy>",
-  "solution": "The fix was implmented by updating the MongoDB query to ensure that the misisng policy numbr feild is inclued. Additinaly, the Kafka prodcer logic was modified to map the policy numbr field corectly. These changes were testd in the QA envrionment using various policy scenarioss, and the fix was deployd to production after succesful testing. No performance imapct was observd after deployment, and downstream systms are now recieving complete policy details as expected.",
-  "owner": "Nishanth Anbazhagan",
-  "bug_id": "SCRUM-7",
-  "bug_url": "https://nish09.atlassian.net/browse/SCRUM-7"
-},
-{
-  "_id": {
-    "$oid": "68490a8f1d1283f32ac0890b"
-  },
-  "bug_id": "SCRUM-15",
-  "bug_url": "https://nish09.atlassian.net/browse/SCRUM-15",
-  "owner": "Aadhavan",
-  "Defect Summary": "The login button on the mobile version of the application is unresponsive when tapped, preventing users from logging in.",
-  "rootCause": {
-    "description": "Initial analysis indicates a UI/UX issue affecting user interaction with the interface.",
-    "analysis": {
-      "logs": "User interaction events not being captured or processed correctly."
-    }
-  },
-  "solution": "Investigate event handling and touch listeners on the affected UI elements."
-},
-{
-  "_id": {
-    "$oid": "684a76a8ce4e44fc3dc239a2"
+    "$oid": "684a7f1735567c510896f90a"
   },
   "bug_id": "SCRUM-16",
   "bug_url": "https://nish09.atlassian.net/browse/SCRUM-16",
@@ -122,4 +19,159 @@
     }
   },
   "solution": "1. Implement proper cleanup in affected components\n2. Add try-finally blocks for resource handling\n3. Implement automatic resource disposal mechanisms\n4. Add memory usage monitoring"
+},
+{
+  "_id": {
+    "$oid": "684a7f1735567c510896f90b"
+  },
+  "bug_id": "SCRUM-15",
+  "bug_url": "https://nish09.atlassian.net/browse/SCRUM-15",
+  "owner": "Aadhavan",
+  "Defect Summary": "The login button on the mobile version of the application is unresponsive when tapped, preventing users from logging in.",
+  "rootCause": {
+    "description": "",
+    "analysis": {
+      "logs": "",
+      "impact_areas": [],
+      "severity": "medium"
+    }
+  },
+  "solution": ""
+},
+{
+  "_id": {
+    "$oid": "684a7f1835567c510896f90c"
+  },
+  "Defect Summary": "Missing policy details in Kafka response for ECAM Service.",
+  "Description": "A critical issue was identified in the ECAM Service where Kafka messages were missing essential policy details. This caused downstream systems to fail when retrieving policy information, leading to service disruptions.",
+  "rootCause": {
+    "description": "The issue occurred due to a race condition between the policy data update process and the Kafka producer. The MongoDB document was being updated asynchronously, but the Kafka producer was fetching the policy details before the update was committed. As a result, the messages sent to Kafka contained outdated or incomplete policy details, causing failures in downstream systems relying on this information. This was confirmed by analyzing the logs and database timestamps, which showed a delay between the update and Kafka message generation.",
+    "analysis": {
+      "logs": ""
+    }
+  },
+  "Error log from Kafka consumer": "Error: Policy details are incomplete in the received payload. XML Payload Sample <Policy> <ID>12345</ID> <Details></Details>  <!-- Missing details --> </Policy>",
+  "solution": "The issue was resolved by implementing a retry mechanism in the Kafka producer to fetch the latest policy details from MongoDB before sending messages. Additionally, a delay was introduced to ensure that the database update process was completed before the Kafka message generation. These fixes were validated in the QA environment under different load conditions, and after successful testing, the solution was deployed to production. No further incidents were reported, and downstream systems are now receiving accurate policy details consistently.",
+  "owner": "Nishanth Anbazhagan",
+  "bug_id": "SCRUM-13",
+  "bug_url": "https://nish09.atlassian.net/browse/SCRUM-13"
+},
+{
+  "_id": {
+    "$oid": "684a7f1935567c510896f90d"
+  },
+  "Defect Summary": "Message Duplication in Notification Service",
+  "Description": "End users were receiving duplicate notifications due to repeated message processing in the service.",
+  "rootCause": {
+    "description": "A bug in the message deduplication logic caused the service to reprocess already delivered messages.",
+    "analysis": {
+      "logs": "Error log: 'Duplicate message detected with ID: 12345.'"
+    }
+  },
+  "solution": "Fixed the deduplication logic and implemented an additional safeguard by tracking processed message IDs in a cache. Deployed and monitored post-fix, confirming the issue was resolved.",
+  "owner": "Unassigned",
+  "bug_id": "SCRUM-11",
+  "bug_url": "https://nish09.atlassian.net/browse/SCRUM-11"
+},
+{
+  "_id": {
+    "$oid": "684a7f1a35567c510896f90e"
+  },
+  "Defect Summary": "Authentication Failure in Login Service",
+  "Description": "Users were unable to log in due to repeated authentication failures, impacting the overall user experience.",
+  "rootCause": {
+    "description": "The login service's token validation mechanism failed due to a mismatch in the signing algorithm between services.",
+    "analysis": {
+      "logs": "Error log: 'JWT signature verification failed.'"
+    }
+  },
+  "solution": "Aligned the signing algorithm between services and added fallback logic for token revalidation. Deployed the fix after QA approval.",
+  "owner": "Unassigned",
+  "bug_id": "SCRUM-9",
+  "bug_url": "https://nish09.atlassian.net/browse/SCRUM-9"
+},
+{
+  "_id": {
+    "$oid": "684a7f1b35567c510896f90f"
+  },
+  "Defect Summary": "Incorrect Data Mapping in User Profile Service",
+  "Description": "User profile updates were being stored with incorrect or missing fields, leading to inconsistencies in the database.",
+  "rootCause": {
+    "description": "The data mapping configuration in the ORM layer was outdated, resulting in mismatched fields during database updates.",
+    "analysis": {
+      "logs": "Error log: 'Field not found exception for field: user_name.'"
+    }
+  },
+  "solution": "Updated the ORM mapping configuration and added validation checks to prevent similar issues in the future. Tested thoroughly in staging before deploying to production.",
+  "owner": "Nishanth Anbazhagan",
+  "bug_id": "SCRUM-8",
+  "bug_url": "https://nish09.atlassian.net/browse/SCRUM-8"
+},
+{
+  "_id": {
+    "$oid": "6852cc8e6004c8bd0d5147ea"
+  },
+  "Defect Summary": "Missing policy details in Kafka response for Policy Lookup Service.",
+  "Description": "A critical issue was identified in the Policy Lookup Service where the Kafka messages were missing essential policy details. This caused downstream systems to fail when retrieving policy information, leading to service disruptions.",
+  "rootCause": {
+    "description": "The issue occur due to a misisng feild mapping between the MongoDB document and the Kafka prodcer payload format. The policy numbr was not included in the Kafka mesage, causng downstream systms to fail while retriving policy details. This was identfied from the logs showing errors relatd to missing fields in payloads.",
+    "analysis": {
+      "logs": ""
+    }
+  },
+  "Error log from Kafka consumer": "'Policy number not found in the payload.' XML Payload Sample <Policy> <ID>12345</ID> <Details>...</Details> </Policy>",
+  "solution": "The fix was implmented by updating the MongoDB query to ensure that the misisng policy numbr feild is inclued. Additinaly, the Kafka prodcer logic was modified to map the policy numbr field corectly. These changes were testd in the QA envrionment using various policy scenarioss, and the fix was deployd to production after succesful testing. No performance imapct was observd after deployment, and downstream systms are now recieving complete policy details as expected.",
+  "owner": "Nishanth Anbazhagan",
+  "bug_id": "SCRUM-7",
+  "bug_url": "https://nish09.atlassian.net/browse/SCRUM-7"
+},
+{
+  "_id": {
+    "$oid": "6852dca82f0152e6ab22b53c"
+  },
+  "bug_id": "SCRUM-17",
+  "bug_url": "https://nish09.atlassian.net/browse/SCRUM-17",
+  "owner": "Aadhavan",
+  "Defect Summary": "API returns 500 error when posting invalid user input",
+  "description": "When a POST request is made to //pop with invalid JSON (missing required field), the API returns a 500 Internal Server Error instead of a 422 Un processable Entity.",
+  "rootCause": {
+    "description": "",
+    "analysis": {
+      "logs": "",
+      "impact_areas": [],
+      "severity": "medium"
+    }
+  },
+  "solution": "",
+  "steps_to_reproduce": [
+    "Send POST request with body",
+    "Observe the response."
+  ],
+  "expected_result": "API should return 422 with validation error details.",
+  "actual_result": "API returns 500 Internal Server Error.",
+  "test_cases": [
+    {
+      "id": "TC001",
+      "input": "user_request=” hello “",
+      "expected": "200, echo input",
+      "actual": "200, echo input",
+      "status": "Pass"
+    },
+    {
+      "id": "TC002",
+      "input": "invalid_field =”test”",
+      "expected": "422, validation error",
+      "actual": "500, Internal Server",
+      "status": "Fail"
+    },
+    {
+      "id": "TC003",
+      "input": "null",
+      "expected": "422, validation error",
+      "actual": "500, Internal Server",
+      "status": "Fail"
+    }
+  ],
+  "root_cause": "The API does not handle Pedantic validation errors gracefully.",
+  "resolution": "Added exception handler for validation errors to return 422."
 }]
